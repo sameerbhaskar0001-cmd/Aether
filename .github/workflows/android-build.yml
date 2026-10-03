@@ -40,7 +40,22 @@ jobs:
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      - name: Run Provider Credential Verification Unit Tests
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          Qwen: ${{ secrets.QWEN }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+        run: ./gradlew :app:testDebugUnitTest --tests "com.example.util.ApiKeyStorageTest" --no-daemon
+
       - name: Build Debug APK, Release APK & Release AAB
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          Qwen: ${{ secrets.QWEN }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
         run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon --stacktrace
 
       - name: Upload Debug APK

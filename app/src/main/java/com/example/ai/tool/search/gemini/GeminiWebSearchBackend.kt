@@ -25,7 +25,7 @@ import java.net.URLEncoder
  */
 class GeminiWebSearchBackend(
     private val apiService: GeminiApiService = RetrofitClient.service,
-    private val apiKeyProvider: () -> String = { BuildConfig.GEMINI_API_KEY }
+    private val apiKeyProvider: () -> String = { com.example.util.ApiKeyStorage.getGeminiKey() }
 ) : WebSearchBackend {
 
     override suspend fun search(query: WebSearchQuery): WebSearchResponse = withContext(Dispatchers.IO) {

@@ -65,52 +65,7 @@ class OpenRouterProvider(
          * Securely parses and extracts the key value from explicit configurations
          */
         fun resolveApiKey(): String {
-            // 1. Try system env directly
-            val directEnv = System.getenv("OPENROUTER_API_KEY")
-            if (!directEnv.isNullOrBlank()) return directEnv.trim()
-
-            // 2. Try the 'Qwen' environment variable explicitly configured in AI Studio Secrets
-            val qwenEnv = System.getenv("Qwen")
-            if (!qwenEnv.isNullOrBlank()) {
-                val cleaned = qwenEnv.trim()
-                if (cleaned.contains("OPENROUTER_API_KEY=")) {
-                    val parts = cleaned.split("OPENROUTER_API_KEY=")
-                    if (parts.size > 1) {
-                        val parsed = parts[1].trim().removeSurrounding("\"").removeSurrounding("'")
-                        if (parsed.isNotBlank()) return parsed
-                    }
-                }
-                return cleaned
-            }
-
-            // 3. Try build config field
-            val buildConfigDirect = try {
-                BuildConfig::class.java.getField("OPENROUTER_API_KEY").get(null) as? String ?: ""
-            } catch (e: Throwable) {
-                ""
-            }
-            if (buildConfigDirect.isNotBlank() && buildConfigDirect != "MY_OPENROUTER_API_KEY") {
-                return buildConfigDirect.trim()
-            }
-
-            val buildConfigQwen = try {
-                BuildConfig::class.java.getField("Qwen").get(null) as? String ?: ""
-            } catch (e: Throwable) {
-                ""
-            }
-            if (buildConfigQwen.isNotBlank() && buildConfigQwen != "MY_QWEN_KEY") {
-                val cleaned = buildConfigQwen.trim()
-                if (cleaned.contains("OPENROUTER_API_KEY=")) {
-                    val parts = cleaned.split("OPENROUTER_API_KEY=")
-                    if (parts.size > 1) {
-                        val parsed = parts[1].trim().removeSurrounding("\"").removeSurrounding("'")
-                        if (parsed.isNotBlank()) return parsed
-                    }
-                }
-                return cleaned
-            }
-
-            return ""
+            return com.example.util.ApiKeyStorage.getOpenRouterKey()
         }
     }
 

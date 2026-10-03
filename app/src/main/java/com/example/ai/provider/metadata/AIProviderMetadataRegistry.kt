@@ -247,21 +247,7 @@ class AIProviderMetadataRegistry(
 
     companion object {
         fun defaultKeyCheck(type: AIProviderType): Boolean {
-            return when (type) {
-                AIProviderType.GEMINI -> {
-                    val key = try { com.example.BuildConfig.GEMINI_API_KEY } catch (e: Throwable) { "" }
-                    key.isNotBlank() && key != "MY_GEMINI_API_KEY"
-                }
-                AIProviderType.GROQ -> {
-                    val key = try { com.example.BuildConfig.GROQ_API_KEY } catch (e: Throwable) { "" }
-                    key.isNotBlank() && key != "MY_GROQ_API_KEY"
-                }
-                AIProviderType.OPENROUTER -> {
-                    OpenRouterProvider.resolveApiKey().isNotBlank()
-                }
-                AIProviderType.OPENAI,
-                AIProviderType.CLAUDE -> false
-            }
+            return com.example.util.ApiKeyStorage.isProviderConfigured(type)
         }
     }
 }

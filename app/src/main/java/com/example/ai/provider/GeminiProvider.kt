@@ -41,7 +41,7 @@ import java.lang.StringBuilder
 
 class GeminiProvider(
     private val timeProvider: TimeProvider = SystemTimeProvider(),
-    private val apiKeyProvider: () -> String = { BuildConfig.GEMINI_API_KEY },
+    private val apiKeyProvider: () -> String = { com.example.util.ApiKeyStorage.getGeminiKey() },
     private val toolRegistry: ToolRegistry? = null,
     private val toolOrchestrator: ToolOrchestrator? = null,
     private val apiService: GeminiApiService = RetrofitClient.service

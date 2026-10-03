@@ -1,6 +1,7 @@
 package com.example.ui.chat
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.DarkMode
@@ -75,6 +77,9 @@ fun ChatScreen(
     val currentConvId by viewModel.currentConversationId.collectAsState()
     val lastResponseProvider by viewModel.lastResponseProvider.collectAsState()
 
+    val hasAnyKey by viewModel.hasAnyKey.collectAsState()
+    var showApiKeyDialog by remember { mutableStateOf(false) }
+
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -96,6 +101,13 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
+    }
+
+    if (showApiKeyDialog) {
+        ApiKeyDialog(
+            onDismiss = { showApiKeyDialog = false },
+            onKeysSaved = { viewModel.refreshKeysState() }
+        )
     }
 
     ModalNavigationDrawer(
@@ -139,6 +151,10 @@ fun ChatScreen(
                     onThemeToggled = {
                         viewModel.toggleTheme()
                     },
+                    onOpenApiKeyDialog = {
+                        coroutineScope.launch { drawerState.close() }
+                        showApiKeyDialog = true
+                    },
                     onCloseDrawer = {
                         coroutineScope.launch { drawerState.close() }
                     }
@@ -180,6 +196,52 @@ fun ChatScreen(
                         },
                         canClear = messages.isNotEmpty()
                     )
+
+                    // Banner when no API Key is configured
+                    if (!hasAnyKey) {
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { showApiKeyDialog = true }
+                                .testTag("api_key_warning_banner"),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Key,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "API Key Setup Required",
+                                        style = TextStyle(
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onBackground
+                                        )
+                                    )
+                                    Text(
+                                        text = "Tap here to paste your Gemini, OpenRouter (Qwen), or Groq API key.",
+                                        style = TextStyle(
+                                            fontFamily = FontFamily.SansSerif,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // Conversation / Empty State Area
                     Box(
@@ -270,6 +332,7 @@ fun DrawerContent(
     onNewChatClicked: () -> Unit,
     onIncognitoToggled: (Boolean) -> Unit,
     onThemeToggled: () -> Unit,
+    onOpenApiKeyDialog: () -> Unit = {},
     onCloseDrawer: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -605,6 +668,69 @@ fun DrawerContent(
                         uncheckedTrackColor = MaterialTheme.colorScheme.background
                     )
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // API Key Settings Option
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+                .clickable { onOpenApiKeyDialog() }
+                .testTag("api_key_settings_card"),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "API Key Settings",
+                            style = TextStyle(
+                                fontFamily = FontFamily.SansSerif,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        )
+                        Text(
+                            text = "Configure Gemini, OpenRouter & Groq keys",
+                            style = TextStyle(
+                                fontFamily = FontFamily.SansSerif,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                            )
+                        )
+                    }
+                }
             }
         }
 

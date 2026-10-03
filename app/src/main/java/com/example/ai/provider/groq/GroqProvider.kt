@@ -33,7 +33,7 @@ import java.lang.StringBuilder
  */
 class GroqProvider(
     private val timeProvider: TimeProvider = SystemTimeProvider(),
-    private val apiKeyProvider: () -> String = { BuildConfig.GROQ_API_KEY },
+    private val apiKeyProvider: () -> String = { com.example.util.ApiKeyStorage.getGroqKey() },
     private val modelProvider: () -> String = { 
         val configured = try { BuildConfig.GROQ_MODEL } catch (e: Throwable) { "" }
         if (configured.isNotBlank() && configured != "GROQ_MODEL") configured else DEFAULT_MODEL

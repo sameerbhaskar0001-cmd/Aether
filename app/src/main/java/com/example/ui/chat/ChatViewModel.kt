@@ -69,6 +69,15 @@ class ChatViewModel @JvmOverloads constructor(
     }
 
     // Model Selection UI States
+    private val _hasAnyKey = MutableStateFlow(com.example.util.ApiKeyStorage.hasAnyProviderConfigured(application))
+    val hasAnyKey: StateFlow<Boolean> = _hasAnyKey.asStateFlow()
+
+    fun refreshKeysState() {
+        _hasAnyKey.value = com.example.util.ApiKeyStorage.hasAnyProviderConfigured(getApplication())
+        _uiSelectionMode.value = selectionManager.getSelectionMode(_isIncognito.value)
+        _uiSelectedProvider.value = selectionManager.getSelectedProvider(_isIncognito.value)
+    }
+
     private val _uiSelectionMode = MutableStateFlow(selectionManager.getSelectionMode(false))
     val uiSelectionMode = _uiSelectionMode.asStateFlow()
 

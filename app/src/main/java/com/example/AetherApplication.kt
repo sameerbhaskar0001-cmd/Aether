@@ -13,6 +13,11 @@ import com.example.ai.file.search.FileSearchRepositoryImpl
 
 class AetherApplication : Application() {
 
+    companion object {
+        lateinit var appContext: Application
+            private set
+    }
+
     lateinit var database: AppDatabase
 
     lateinit var conversationRepository: ConversationRepository
@@ -23,6 +28,7 @@ class AetherApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        appContext = this
         database = AppDatabase.getDatabase(this)
         conversationRepository = ConversationRepositoryImpl(
             database.conversationDao(),
