@@ -1,0 +1,84 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.3.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Reusing configuration cache.
+> Task :app:preBuild UP-TO-DATE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:processDebugGoogleServices UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugBuildConfig FROM-CACHE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources FROM-CACHE
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:generateDebugRFile UP-TO-DATE
+> Task :app:mergeDebugAssets UP-TO-DATE
+> Task :app:processDebugMainManifest FROM-CACHE
+> Task :app:kspDebugKotlin FROM-CACHE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugUnitTestManifest UP-TO-DATE
+> Task :app:compileDebugKotlin FROM-CACHE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac FROM-CACHE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:packageDebugUnitTestForUnitTest UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar UP-TO-DATE
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:generateDebugUnitTestConfig UP-TO-DATE
+> Task :app:kspDebugUnitTestKotlin
+
+> Task :app:compileDebugUnitTestKotlin
+w: file:///app/applet/app/src/test/java/com/example/ExampleRobolectricTest.kt:48:21 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///app/applet/app/src/test/java/com/example/ExampleRobolectricTest.kt:72:21 This declaration needs opt-in. Its usage should be marked with '@kotlinx.coroutines.ExperimentalCoroutinesApi' or '@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)'
+w: file:///app/applet/app/src/test/java/com/example/ExampleRobolectricTest.kt:883:20 Check for instance is always 'true'.
+w: file:///app/applet/app/src/test/java/com/example/ExampleRobolectricTest.kt:4159:46 Unchecked cast of 'Any!' to 'MutableStateFlow<ProactiveDelivery?>'.
+
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+
+> Task :app:testDebugUnitTest
+
+LiveAutoRoutingIntegrationTest > testManualProviderSelectionRemainsStrict PASSED
+
+LiveAutoRoutingIntegrationTest > testNoEligibleAutoDecisionHandledSafely FAILED
+    java.lang.AssertionError at LiveAutoRoutingIntegrationTest.kt:195
+
+LiveAutoRoutingIntegrationTest > testFailedExecutionUpdatesHealthTelemetry PASSED
+
+LiveAutoRoutingIntegrationTest > testExistingFallbackBehaviorRemainsBounded PASSED
+
+LiveAutoRoutingIntegrationTest > testSelectedEligibleProviderIsUsed PASSED
+
+LiveAutoRoutingIntegrationTest > testInactiveOpenAiAndClaudeCannotBeSelected PASSED
+
+LiveAutoRoutingIntegrationTest > testIncognitoDoesNotPersistRoutingOrTelemetryState PASSED
+
+LiveAutoRoutingIntegrationTest > testSuccessfulExecutionUpdatesHealthAndPerformanceTelemetry PASSED
+
+LiveAutoRoutingIntegrationTest > testAutoModeActuallyUsesAutoRoutingEngine PASSED
+
+9 tests completed, 1 failed
+
+> Task :app:testDebugUnitTest FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testDebugUnitTest'.
+> There were failing tests. See the report at: file:///app/applet/app/build/reports/tests/testDebugUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+
+BUILD FAILED in 1m 2s
+33 actionable tasks: 4 executed, 7 from cache, 22 up-to-date
+Configuration cache entry reused.
