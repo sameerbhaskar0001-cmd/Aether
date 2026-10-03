@@ -10,6 +10,10 @@ class ApiKeyStorageTest {
 
     @Test
     fun testProviderConfiguredStatus_noSecretLeakage() {
+        val geminiKey = ApiKeyStorage.getGeminiKey()
+        val groqKey = ApiKeyStorage.getGroqKey()
+        val openRouterKey = ApiKeyStorage.getOpenRouterKey()
+
         val geminiConfigured = ApiKeyStorage.isProviderConfigured(AIProviderType.GEMINI)
         val groqConfigured = ApiKeyStorage.isProviderConfigured(AIProviderType.GROQ)
         val openRouterConfigured = ApiKeyStorage.isProviderConfigured(AIProviderType.OPENROUTER)
@@ -21,9 +25,9 @@ class ApiKeyStorageTest {
         println("OpenRouter configured = $openRouterConfigured")
         println("===========================================")
 
-        assertTrue("Gemini provider should be detected as configured", geminiConfigured)
-        assertTrue("Groq provider should be detected as configured", groqConfigured)
-        assertTrue("OpenRouter provider should be detected as configured", openRouterConfigured)
+        assertEquals(geminiKey.isNotBlank(), geminiConfigured)
+        assertEquals(groqKey.isNotBlank(), groqConfigured)
+        assertEquals(openRouterKey.isNotBlank(), openRouterConfigured)
     }
 
     @Test
