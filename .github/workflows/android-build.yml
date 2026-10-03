@@ -39,7 +39,7 @@ jobs:
           fi
 
       - name: Build Debug APK, Release APK & Release AAB
-        run: ./gradlew assembleDebug assembleRelease bundleRelease -Pkotlin.compiler.execution.strategy=daemon
+        run: ./gradlew assembleDebug assembleRelease bundleRelease
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
