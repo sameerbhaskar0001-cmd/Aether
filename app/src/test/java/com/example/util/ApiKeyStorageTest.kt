@@ -5,7 +5,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class ApiKeyStorageTest {
 
     @Test
@@ -38,10 +41,19 @@ class ApiKeyStorageTest {
     }
 
     @Test
-    fun testPlaceholderDetection() {
-        val placeholder = "MY_GEMINI_API_KEY"
-        val isConfigured = ApiKeyStorage.getGeminiKey().isNotBlank()
-        // Ensure placeholder values are not treated as valid configured keys
-        assertFalse("Placeholder string should not equal a valid custom key", placeholder == "AQ.ValidKey")
+    fun testRealGeminiProviderCall() = kotlinx.coroutines.runBlocking {
+        if (ApiKeyStorage.isProviderConfigured(AIProviderType.GEMINI)) {
+            val provider = com.example.ai.provider.GeminiProvider()
+            val response = provider.generate(
+                com.example.ai.provider.models.ProviderRequest(
+                    userMessage = "Reply with 'AETHER_ONLINE'"
+                )
+            )
+            println("=== REAL API REQUEST VERIFICATION ===")
+            println("Gemini response status: Success (length=${response.text.length})")
+            println("Response preview: ${response.text.take(50)}")
+            println("=====================================")
+            assertTrue("Provider response should not be blank", response.text.isNotBlank())
+        }
     }
 }

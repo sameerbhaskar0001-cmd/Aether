@@ -82,6 +82,11 @@ class GroqProvider(
         val clientService = apiService ?: GroqRetrofitClient.service
         val authHeader = "Bearer $apiKey"
 
+        var chunkCount = 0
+        var contentChunkCount = 0
+
+        Log.d(TAG, "Groq stream start: provider=GROQ, configured=true, model=${groqRequest.model}")
+
         try {
             val responseBody = clientService.generateChatCompletionStream(authHeader, groqRequest)
             val currentText = StringBuilder()
@@ -105,7 +110,10 @@ class GroqProvider(
                         val choice = chunkObj?.choices?.firstOrNull()
                         val deltaText = choice?.delta?.content
 
+                        chunkCount++
+
                         if (!deltaText.isNullOrEmpty()) {
+                            contentChunkCount++
                             currentText.append(deltaText)
                             val isDone = choice.finishReason != null
                             if (isDone) streamCompleted = true
@@ -127,6 +135,8 @@ class GroqProvider(
                     }
                 }
             }
+
+            Log.d(TAG, "Groq stream end: chunkCount=$chunkCount, contentChunkCount=$contentChunkCount, accumulatedTextLength=${currentText.length}, streamCompleted=$streamCompleted")
 
             if (currentText.isEmpty()) {
                 // If stream was empty, fallback to non-streaming call

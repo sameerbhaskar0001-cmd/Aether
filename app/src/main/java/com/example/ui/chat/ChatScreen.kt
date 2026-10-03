@@ -734,6 +734,32 @@ fun DrawerContent(
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Temporary Runtime Diagnostic Card (Reports ONLY boolean presence, NEVER keys)
+        val bcGemini = try { com.example.BuildConfig.GEMINI_API_KEY.isNotBlank() && !com.example.BuildConfig.GEMINI_API_KEY.startsWith("MY_") } catch (e: Throwable) { false }
+        val bcGroq = try { com.example.BuildConfig.GROQ_API_KEY.isNotBlank() && !com.example.BuildConfig.GROQ_API_KEY.startsWith("MY_") } catch (e: Throwable) { false }
+        val bcOpenRouter = try { com.example.BuildConfig.OPENROUTER_API_KEY.isNotBlank() && !com.example.BuildConfig.OPENROUTER_API_KEY.startsWith("MY_") } catch (e: Throwable) { false }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(modifier = Modifier.padding(10.dp)) {
+                Text(
+                    text = "BUILDCONFIG RUNTIME DIAGNOSTIC",
+                    style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                )
+                Text(text = "GEMINI BuildConfig key present: $bcGemini", style = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface))
+                Text(text = "GROQ BuildConfig key present: $bcGroq", style = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface))
+                Text(text = "OPENROUTER BuildConfig key present: $bcOpenRouter", style = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface))
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         // Historical Conversations Section Header

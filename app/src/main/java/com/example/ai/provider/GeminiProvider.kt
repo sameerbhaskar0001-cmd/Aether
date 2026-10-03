@@ -112,9 +112,10 @@ class GeminiProvider(
                             currentText.append(textChunk)
                             emit(
                                 ProviderStreamChunk(
-                                    textDelta = currentText.toString(),
+                                    textDelta = textChunk,
                                     isComplete = false,
-                                    providerName = providerName
+                                    providerName = providerName,
+                                    accumulatedText = currentText.toString()
                                 )
                             )
                         }

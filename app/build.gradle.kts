@@ -8,6 +8,54 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+fun resolveSecretValue(varNames: List<String>): String {
+    var rawVal = ""
+    for (name in varNames) {
+        val sys = System.getenv(name)?.trim()
+        if (!sys.isNullOrBlank() && !sys.startsWith("MY_")) {
+            rawVal = sys
+            break
+        }
+        val prop = project.findProperty(name)?.toString()?.trim()
+        if (!prop.isNullOrBlank() && !prop.startsWith("MY_")) {
+            rawVal = prop
+            break
+        }
+    }
+
+    if (rawVal.isBlank() || rawVal.startsWith("MY_")) {
+        val envFile = file("${rootDir}/.env")
+        if (envFile.exists()) {
+            envFile.readLines().forEach { line ->
+                if (line.contains("=") && !line.trim().startsWith("#")) {
+                    val parts = line.split("=", limit = 2)
+                    val k = parts[0].trim()
+                    val v = parts[1].trim()
+                    if (varNames.contains(k) && v.isNotBlank() && !v.startsWith("MY_")) {
+                        rawVal = v
+                    }
+                }
+            }
+        }
+    }
+
+    var clean = rawVal.trim()
+    if (clean.startsWith("export ")) {
+        clean = clean.removePrefix("export ").trim()
+    }
+    if (clean.contains("=")) {
+        val parts = clean.split("=", limit = 2)
+        clean = parts[1].trim()
+    }
+    clean = clean.removeSurrounding("\"").removeSurrounding("'").trim()
+    return if (clean.startsWith("MY_")) "" else clean
+}
+
+val finalGeminiKey = resolveSecretValue(listOf("GEMINI_API_KEY", "GEMINI_KEY", "GEMINI", "Gemini", "gemini_api_key"))
+val finalGroqKey = resolveSecretValue(listOf("GROQ_API_KEY", "GROQ_KEY", "GROQ", "Groq", "groq_api_key"))
+val finalOpenRouterKey = resolveSecretValue(listOf("OPENROUTER_API_KEY", "OPENROUTER_KEY", "OPENROUTER", "OpenRouter", "openrouter_api_key", "Qwen", "QWEN", "qwen"))
+val finalGroqModel = resolveSecretValue(listOf("GROQ_MODEL", "groq_model")).ifEmpty { "openai/gpt-oss-20b" }
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -20,6 +68,12 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    buildConfigField("String", "GEMINI_API_KEY", "\"${finalGeminiKey}\"")
+    buildConfigField("String", "GROQ_API_KEY", "\"${finalGroqKey}\"")
+    buildConfigField("String", "OPENROUTER_API_KEY", "\"${finalOpenRouterKey}\"")
+    buildConfigField("String", "Qwen", "\"${finalOpenRouterKey}\"")
+    buildConfigField("String", "GROQ_MODEL", "\"${finalGroqModel}\"")
   }
 
   signingConfigs {
@@ -130,6 +184,11 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
+  ignoreList.add("GEMINI_API_KEY")
+  ignoreList.add("GROQ_API_KEY")
+  ignoreList.add("OPENROUTER_API_KEY")
+  ignoreList.add("Qwen")
+  ignoreList.add("GROQ_MODEL")
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }

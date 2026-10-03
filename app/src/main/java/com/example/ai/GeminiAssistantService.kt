@@ -181,10 +181,11 @@ class GeminiAssistantService(
 
                 val currentProvider = providerFactory.getProvider(providerType)
                 currentProvider.generateStream(request).collect { chunk ->
-                    if (chunk.textDelta.isNotBlank()) {
+                    val textToEmit = chunk.accumulatedText.ifBlank { chunk.textDelta }
+                    if (chunk.textDelta.isNotBlank() || chunk.accumulatedText.isNotBlank()) {
                         emittedMeaningful = true
                     }
-                    emit(chunk.textDelta)
+                    emit(textToEmit)
                 }
                 val duration = timeProvider.currentTimeMillis() - startTime
                 effectiveHealthTracker.recordSuccess(providerType)
