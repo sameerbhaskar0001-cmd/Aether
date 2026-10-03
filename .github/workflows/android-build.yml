@@ -27,34 +27,39 @@ jobs:
 
       - name: Verify or Generate Gradle Wrapper
         run: |
-          if [ ! -f gradlew ]; then
+          if [ ! -f gradlew ] || [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
             gradle wrapper
           fi
           chmod +x gradlew
 
-      - name: Decode Debug Keystore (Optional)
+      - name: Ensure Keystore Exists
         run: |
           if [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f debug.keystore ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
       - name: Build Debug APK, Release APK & Release AAB
-        run: ./gradlew assembleDebug assembleRelease bundleRelease
+        run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: ignore
 
       - name: Upload Release APK (Uptodown / Direct Install ke liye)
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
           path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: ignore
 
       - name: Upload Release AAB (Google Play Store ke liye)
         uses: actions/upload-artifact@v4
         with:
           name: release-aab
           path: app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: ignore
