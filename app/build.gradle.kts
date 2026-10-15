@@ -56,6 +56,31 @@ val finalGroqKey = resolveSecretValue(listOf("GROQ_API_KEY", "GROQ_KEY", "GROQ",
 val finalOpenRouterKey = resolveSecretValue(listOf("OPENROUTER_API_KEY", "OPENROUTER_KEY", "OPENROUTER", "OpenRouter", "openrouter_api_key", "Qwen", "QWEN", "qwen"))
 val finalGroqModel = resolveSecretValue(listOf("GROQ_MODEL", "groq_model")).ifEmpty { "openai/gpt-oss-20b" }
 
+// Build-time environment secret synchronization for Secrets Gradle Plugin & local .env
+val rootEnvFile = file("${rootDir}/.env")
+val envProps = mutableMapOf<String, String>()
+if (finalGeminiKey.isNotBlank()) envProps["GEMINI_API_KEY"] = finalGeminiKey
+if (finalGroqKey.isNotBlank()) envProps["GROQ_API_KEY"] = finalGroqKey
+if (finalGroqModel.isNotBlank()) envProps["GROQ_MODEL"] = finalGroqModel
+if (finalOpenRouterKey.isNotBlank()) {
+    envProps["OPENROUTER_API_KEY"] = finalOpenRouterKey
+    envProps["Qwen"] = finalOpenRouterKey
+}
+
+if (envProps.isNotEmpty()) {
+    val existingContent = if (rootEnvFile.exists()) rootEnvFile.readText() else ""
+    val existingMap = mutableMapOf<String, String>()
+    existingContent.lines().forEach { line ->
+        if (line.contains("=") && !line.trim().startsWith("#")) {
+            val parts = line.split("=", limit = 2)
+            existingMap[parts[0].trim()] = parts[1].trim()
+        }
+    }
+    existingMap.putAll(envProps)
+    val updatedLines = existingMap.map { "${it.key}=${it.value}" }.joinToString("\n")
+    rootEnvFile.writeText(updatedLines + "\n")
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -148,35 +173,6 @@ android {
   }
 }
 
-// Build-time environment secret synchronization for Secrets Gradle Plugin
-val rootEnvFile = file("${rootDir}/.env")
-
-val geminiEnv = System.getenv("GEMINI_API_KEY")?.trim() ?: ""
-val groqEnv = System.getenv("GROQ_API_KEY")?.trim() ?: ""
-val openRouterEnv = System.getenv("OPENROUTER_API_KEY")?.trim() ?: ""
-val qwenEnv = System.getenv("Qwen")?.trim() ?: ""
-val groqModelEnv = System.getenv("GROQ_MODEL")?.trim() ?: ""
-
-val envProps = mutableMapOf<String, String>()
-if (geminiEnv.isNotBlank() && !geminiEnv.startsWith("MY_")) envProps["GEMINI_API_KEY"] = geminiEnv
-if (groqEnv.isNotBlank() && !groqEnv.startsWith("MY_")) envProps["GROQ_API_KEY"] = groqEnv
-if (groqModelEnv.isNotBlank()) envProps["GROQ_MODEL"] = groqModelEnv
-if (openRouterEnv.isNotBlank() && !openRouterEnv.startsWith("MY_")) envProps["OPENROUTER_API_KEY"] = openRouterEnv
-if (qwenEnv.isNotBlank() && !qwenEnv.startsWith("MY_")) envProps["Qwen"] = qwenEnv
-
-if (envProps.isNotEmpty()) {
-    val existingContent = if (rootEnvFile.exists()) rootEnvFile.readText() else ""
-    val existingMap = mutableMapOf<String, String>()
-    existingContent.lines().forEach { line ->
-        if (line.contains("=") && !line.trim().startsWith("#")) {
-            val parts = line.split("=", limit = 2)
-            existingMap[parts[0].trim()] = parts[1].trim()
-        }
-    }
-    existingMap.putAll(envProps)
-    val updatedLines = existingMap.map { "${it.key}=${it.value}" }.joinToString("\n")
-    rootEnvFile.writeText(updatedLines + "\n")
-}
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
