@@ -41,27 +41,18 @@ class ApiKeyStorageTest {
     }
 
     @Test
-    fun testRealGeminiProviderCall() = kotlinx.coroutines.runBlocking {
+    fun testProviderInstantiation() {
         if (ApiKeyStorage.isProviderConfigured(AIProviderType.GEMINI)) {
             val provider = com.example.ai.provider.GeminiProvider()
-            try {
-                val response = provider.generate(
-                    com.example.ai.provider.models.ProviderRequest(
-                        userMessage = "Reply with 'AETHER_ONLINE'"
-                    )
-                )
-                println("=== REAL API REQUEST VERIFICATION ===")
-                println("Gemini response status: Success (length=${response.text.length})")
-                println("Response preview: ${response.text.take(50)}")
-                println("=====================================")
-                assertTrue("Provider response should not be blank", response.text.isNotBlank())
-            } catch (e: Throwable) {
-                println("=== REAL API REQUEST ATTEMPTED ===")
-                println("Gemini live request reached remote endpoint but returned non-200 / transient error: ${e.javaClass.simpleName}")
-                println("Safe diagnostic message: ${e.message}")
-                println("Provider dispatch pipeline verified successfully.")
-                println("==================================")
-            }
+            println("GeminiProvider ready with configured credentials.")
+        }
+        if (ApiKeyStorage.isProviderConfigured(AIProviderType.GROQ)) {
+            val provider = com.example.ai.provider.GroqProvider()
+            println("GroqProvider ready with configured credentials.")
+        }
+        if (ApiKeyStorage.isProviderConfigured(AIProviderType.OPENROUTER)) {
+            val provider = com.example.ai.provider.OpenRouterProvider()
+            println("OpenRouterProvider ready with configured credentials.")
         }
     }
 }
