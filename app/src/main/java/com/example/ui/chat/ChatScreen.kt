@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
@@ -135,6 +136,7 @@ fun ChatScreen(
     }
 
     var currentScreen by remember { mutableStateOf(AppScreen.CHAT) }
+    var showApiKeyDialog by remember { mutableStateOf(false) }
 
     BackHandler(enabled = drawerState.isOpen || currentScreen != AppScreen.CHAT) {
         if (drawerState.isOpen) {
@@ -192,6 +194,10 @@ fun ChatScreen(
                     onThemeToggled = {
                         viewModel.toggleTheme()
                     },
+                    onOpenApiKeyDialog = {
+                        showApiKeyDialog = true
+                        coroutineScope.launch { drawerState.close() }
+                    },
                     onCloseDrawer = {
                         coroutineScope.launch { drawerState.close() }
                     }
@@ -199,6 +205,15 @@ fun ChatScreen(
             }
         }
     ) {
+        if (showApiKeyDialog) {
+            ApiKeyDialog(
+                onDismiss = { showApiKeyDialog = false },
+                onKeysSaved = {
+                    viewModel.refreshKeysState()
+                }
+            )
+        }
+
         if (currentScreen == AppScreen.CHAT) {
             Scaffold(
                 modifier = modifier
@@ -244,9 +259,12 @@ fun ChatScreen(
                             .weight(1f)
                             .fillMaxWidth()
                     ) {
+                        val hasAnyKey by viewModel.hasAnyKey.collectAsState()
                         if (messages.isEmpty()) {
                             EmptyStateScreen(
                                 isIncognito = isIncognito,
+                                hasAnyKey = hasAnyKey,
+                                onOpenApiKeyDialog = { showApiKeyDialog = true },
                                 onSuggestionClick = { suggestion ->
                                     viewModel.sendMessage(suggestion)
                                 }
@@ -273,7 +291,8 @@ fun ChatScreen(
                                         isSpeaking = isSpeakingThis,
                                         onSpeakToggle = {
                                             voiceController.toggleSpeak(message.id, message.content)
-                                        }
+                                        },
+                                        onOpenApiKeyDialog = { showApiKeyDialog = true }
                                     )
                                 }
                             }
@@ -554,6 +573,36 @@ fun DrawerContent(
                     fontWeight = if (currentScreen == AppScreen.FILES) FontWeight.SemiBold else FontWeight.Normal,
                     fontSize = 13.sp,
                     color = if (currentScreen == AppScreen.FILES) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                )
+            )
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // API Key & Backend Proxy Configuration Navigation Item
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onOpenApiKeyDialog() }
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .testTag("drawer_nav_api_key"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Key,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = "API Key / Credentials",
+                style = TextStyle(
+                    fontFamily = FontFamily.SansSerif,
+                    fontWeight = FontWeight.Normal,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onBackground
                 )
             )
         }
@@ -934,7 +983,9 @@ fun TopNavigationBar(
 fun EmptyStateScreen(
     isIncognito: Boolean,
     onSuggestionClick: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    hasAnyKey: Boolean = true,
+    onOpenApiKeyDialog: () -> Unit = {}
 ) {
     Column(
         modifier = modifier
@@ -986,7 +1037,7 @@ fun EmptyStateScreen(
             text = if (isIncognito) {
                 "Incognito session active. Messages are completely transient and will never be saved to persistent database history."
             } else {
-                "An autonomous cognitive workspace powered by Gemini 2.5, designed for absolute focus and zero noise."
+                "An autonomous cognitive workspace powered by Gemini 3.8 Flash, designed for absolute focus and zero noise."
             },
             style = TextStyle(
                 fontFamily = FontFamily.SansSerif,
@@ -998,6 +1049,65 @@ fun EmptyStateScreen(
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
+
+        if (!hasAnyKey) {
+            Spacer(modifier = Modifier.height(20.dp))
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(12.dp)),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "API Key Required",
+                            style = TextStyle(
+                                fontFamily = FontFamily.SansSerif,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "To enable chat on this device, configure your Gemini API key.",
+                        style = TextStyle(
+                            fontFamily = FontFamily.SansSerif,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = onOpenApiKeyDialog,
+                        modifier = Modifier.testTag("empty_state_configure_key_button"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Configure API Key", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(48.dp))
 
@@ -1169,6 +1279,7 @@ fun MessageItem(
     isDarkTheme: Boolean = true,
     isSpeaking: Boolean = false,
     onSpeakToggle: () -> Unit = {},
+    onOpenApiKeyDialog: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isUser = message.sender == Sender.USER
@@ -1277,6 +1388,27 @@ fun MessageItem(
                             ),
                             modifier = Modifier.padding(top = 2.dp)
                         )
+
+                        if (message.content.contains("Provider API credentials are not configured")) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Button(
+                                onClick = onOpenApiKeyDialog,
+                                modifier = Modifier.testTag("error_configure_key_button"),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Key,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Configure Gemini API Key", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }

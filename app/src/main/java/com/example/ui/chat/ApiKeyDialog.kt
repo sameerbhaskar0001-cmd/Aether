@@ -25,8 +25,11 @@ fun ApiKeyDialog(
     onKeysSaved: () -> Unit
 ) {
     val context = LocalContext.current
-    var geminiKey by remember { mutableStateOf(ApiKeyStorage.getGeminiKey(context)) }
+    var geminiKey by remember { mutableStateOf(ApiKeyStorage.getGeminiKey(context).let { if (it == ApiKeyStorage.PROXY_SENTINEL_KEY) "" else it }) }
+    var proxyUrl by remember { mutableStateOf(ApiKeyStorage.getGeminiProxyBaseUrl(context)) }
     var showGeminiSecret by remember { mutableStateOf(false) }
+
+    val audit = remember(geminiKey, proxyUrl) { ApiKeyStorage.auditSecurity(context) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -47,7 +50,7 @@ fun ApiKeyDialog(
                     modifier = Modifier.size(20.dp)
                 )
                 Text(
-                    text = "Gemini API Configuration",
+                    text = "API Key / Backend Configuration",
                     style = TextStyle(
                         fontFamily = FontFamily.SansSerif,
                         fontWeight = FontWeight.Bold,
@@ -64,10 +67,19 @@ fun ApiKeyDialog(
                     .padding(top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Text(
+                    text = "Enter your Google Gemini API key to enable chat and autonomous capabilities on this device.",
+                    style = TextStyle(
+                        fontFamily = FontFamily.SansSerif,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                )
+
                 OutlinedTextField(
                     value = geminiKey,
                     onValueChange = { geminiKey = it },
-                    label = { Text("Gemini API Key", fontSize = 12.sp) },
+                    label = { Text("Gemini API Key (AIzaSy...)", fontSize = 12.sp) },
                     singleLine = true,
                     visualTransformation = if (showGeminiSecret) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
@@ -80,12 +92,25 @@ fun ApiKeyDialog(
                         .testTag("input_gemini_api_key"),
                     textStyle = TextStyle(fontSize = 13.sp)
                 )
+
+                OutlinedTextField(
+                    value = proxyUrl,
+                    onValueChange = { proxyUrl = it },
+                    label = { Text("Optional Backend Proxy URL (https://...)", fontSize = 12.sp) },
+                    placeholder = { Text("https://my-proxy.com/api/", fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("input_proxy_url"),
+                    textStyle = TextStyle(fontSize = 13.sp)
+                )
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     ApiKeyStorage.saveGeminiKey(context, geminiKey)
+                    ApiKeyStorage.saveGeminiProxyBaseUrl(context, proxyUrl)
                     onKeysSaved()
                     onDismiss()
                 },
