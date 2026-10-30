@@ -16,11 +16,13 @@ import com.example.data.local.dao.FileDao
 import com.example.data.local.dao.NoteDao
 import com.example.data.local.dao.TaskDao
 import com.example.data.local.dao.ReminderDao
+import com.example.data.local.dao.ProactiveCooldownDao
 import com.example.data.local.entity.FileDocumentEntity
 import com.example.data.local.entity.MemoryExtractionJobEntity
 import com.example.data.local.entity.NoteEntity
 import com.example.data.local.entity.TaskEntity
 import com.example.data.local.entity.ReminderEntity
+import com.example.data.local.entity.ProactiveCooldownEntity
 
 @Database(
     entities = [
@@ -31,9 +33,10 @@ import com.example.data.local.entity.ReminderEntity
         FileDocumentEntity::class,
         NoteEntity::class,
         TaskEntity::class,
-        ReminderEntity::class
+        ReminderEntity::class,
+        ProactiveCooldownEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,6 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun taskDao(): TaskDao
     abstract fun reminderDao(): ReminderDao
+    abstract fun proactiveCooldownDao(): ProactiveCooldownDao
 
     companion object {
         @Volatile
@@ -111,6 +115,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `proactive_cooldowns` (
+                        `signalId` TEXT NOT NULL,
+                        `lastSurfacedTimestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`signalId`)
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -118,7 +134,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "aether_database"
                 )
-                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_8_9)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

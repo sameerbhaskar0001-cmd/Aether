@@ -1,5 +1,6 @@
 package com.example.ai
 
+import com.example.ai.provider.models.ProviderImageAttachment
 import com.example.data.model.Message
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -7,6 +8,7 @@ import kotlinx.coroutines.flow.flow
 
 interface AssistantService {
     val lastUsedProviderFlow: Flow<String?> get() = kotlinx.coroutines.flow.flowOf(null)
+    val lastUsedModelFlow: Flow<String?> get() = kotlinx.coroutines.flow.flowOf(null)
 
     /**
      * Generates a response based on the latest user message and history.
@@ -19,6 +21,22 @@ interface AssistantService {
         fileContext: String? = null,
         isIncognito: Boolean = false
     ): Flow<String>
+
+    fun generateResponseStream(
+        userMessage: String,
+        history: List<Message>,
+        relevantMemories: List<com.example.data.model.Memory> = emptyList(),
+        fileContext: String? = null,
+        isIncognito: Boolean = false,
+        imageAttachment: ProviderImageAttachment? = null,
+        preferredModelId: String? = null
+    ): Flow<String> = generateResponseStream(
+        userMessage = userMessage,
+        history = history,
+        relevantMemories = relevantMemories,
+        fileContext = fileContext,
+        isIncognito = isIncognito
+    )
 }
 
 class MockAssistantService : AssistantService {
@@ -39,13 +57,9 @@ class MockAssistantService : AssistantService {
         fileContext: String?,
         isIncognito: Boolean
     ): Flow<String> = flow {
-        // Choose a response based on keywords or cycle through them
         val text = selectResponse(userMessage)
-        
-        // Simulate thinking latency
         delay(1200)
 
-        // Stream word-by-word with small delay
         val words = text.split(" ")
         val currentResponse = StringBuilder()
         
@@ -55,7 +69,7 @@ class MockAssistantService : AssistantService {
             }
             currentResponse.append(word)
             emit(currentResponse.toString())
-            delay(100) // 100ms per word streaming
+            delay(100)
         }
     }
 
@@ -75,7 +89,6 @@ class MockAssistantService : AssistantService {
                 "Workspace cleared. Standing by for new instructions."
             }
             else -> {
-                // Return a random response from our predefined beautiful assistance quotes
                 responses.random()
             }
         }

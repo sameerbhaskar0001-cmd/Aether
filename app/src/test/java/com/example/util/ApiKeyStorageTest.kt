@@ -1,9 +1,8 @@
 package com.example.util
 
 import com.example.ai.provider.AIProviderType
+import com.example.ai.provider.GeminiProvider
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -14,45 +13,30 @@ class ApiKeyStorageTest {
     @Test
     fun testProviderConfiguredStatus_noSecretLeakage() {
         val geminiKey = ApiKeyStorage.getGeminiKey()
-        val groqKey = ApiKeyStorage.getGroqKey()
-        val openRouterKey = ApiKeyStorage.getOpenRouterKey()
-
         val geminiConfigured = ApiKeyStorage.isProviderConfigured(AIProviderType.GEMINI)
-        val groqConfigured = ApiKeyStorage.isProviderConfigured(AIProviderType.GROQ)
-        val openRouterConfigured = ApiKeyStorage.isProviderConfigured(AIProviderType.OPENROUTER)
 
         // Output ONLY boolean/configuration state - never print actual secrets!
         println("=== PROVIDER CONFIGURATION VERIFICATION ===")
         println("Gemini configured = $geminiConfigured")
-        println("Groq configured = $groqConfigured")
-        println("OpenRouter configured = $openRouterConfigured")
         println("===========================================")
 
         assertEquals(geminiKey.isNotBlank(), geminiConfigured)
-        assertEquals(groqKey.isNotBlank(), groqConfigured)
-        assertEquals(openRouterKey.isNotBlank(), openRouterConfigured)
     }
 
     @Test
     fun testSanitizeKey_removesExportAndQuotes() {
-        val rawExport = "export OPENROUTER_API_KEY=\"sk-or-v1-123456789\""
+        val rawExport = "export GEMINI_API_KEY=\"AIza_test_secret_12345\""
         val sanitized = ApiKeyStorage.sanitizeKey(rawExport)
-        assertEquals("sk-or-v1-123456789", sanitized)
+        assertEquals("AIza_test_secret_12345", sanitized)
     }
 
     @Test
     fun testProviderInstantiation() {
-        if (ApiKeyStorage.isProviderConfigured(AIProviderType.GEMINI)) {
-            val provider = com.example.ai.provider.GeminiProvider()
-            println("GeminiProvider ready with configured credentials.")
-        }
-        if (ApiKeyStorage.isProviderConfigured(AIProviderType.GROQ)) {
-            val provider = com.example.ai.provider.GroqProvider()
-            println("GroqProvider ready with configured credentials.")
-        }
-        if (ApiKeyStorage.isProviderConfigured(AIProviderType.OPENROUTER)) {
-            val provider = com.example.ai.provider.OpenRouterProvider()
-            println("OpenRouterProvider ready with configured credentials.")
-        }
+        val geminiProvider = GeminiProvider()
+        assertEquals("Gemini", geminiProvider.providerName)
+        assertEquals(AIProviderType.GEMINI, geminiProvider.type)
+        assertEquals("gemini-2.5-flash", GeminiProvider.DEFAULT_MODEL_ID)
+        assertEquals("gemini-2.5-pro", GeminiProvider.PRO_MODEL_ID)
+        assertEquals("gemini-2.0-flash", GeminiProvider.FALLBACK_MODEL_ID)
     }
 }

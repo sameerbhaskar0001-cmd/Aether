@@ -16,6 +16,7 @@ class ReminderReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null) return
+        if (intent?.getBooleanExtra("is_incognito", false) == true) return
 
         val title = intent?.getStringExtra("title") ?: "Aether Reminder"
         val reminderId = intent?.getStringExtra("id") ?: ""

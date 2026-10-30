@@ -7,9 +7,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.AetherApplication
 import com.example.ai.AssistantService
 import com.example.ai.GeminiAssistantService
-import com.example.ai.MockAssistantService
 import com.example.ai.MemoryService
 import com.example.ai.MemoryServiceImpl
+import com.example.ai.provider.selection.GeminiModelVariant
 import com.example.data.model.Conversation
 import com.example.data.model.Message
 import com.example.data.model.MessageStatus
@@ -72,10 +72,40 @@ class ChatViewModel @JvmOverloads constructor(
     private val _hasAnyKey = MutableStateFlow(com.example.util.ApiKeyStorage.hasAnyProviderConfigured(application))
     val hasAnyKey: StateFlow<Boolean> = _hasAnyKey.asStateFlow()
 
+    private val _geminiModelVariant = MutableStateFlow(selectionManager.getGeminiModelVariant(false))
+    val geminiModelVariant: StateFlow<GeminiModelVariant> = _geminiModelVariant.asStateFlow()
+
+    fun setGeminiModelVariant(variant: GeminiModelVariant, isIncog: Boolean = _isIncognito.value) {
+        selectionManager.setGeminiModelVariant(variant, isIncog)
+        _geminiModelVariant.value = selectionManager.getGeminiModelVariant(isIncog)
+    }
+
+    fun toggleGeminiModelVariant() {
+        val next = if (_geminiModelVariant.value == GeminiModelVariant.FLASH_2_5) {
+            GeminiModelVariant.PRO_2_5
+        } else {
+            GeminiModelVariant.FLASH_2_5
+        }
+        setGeminiModelVariant(next, _isIncognito.value)
+    }
+
+    // Multimodal Image Attachment State
+    private val _attachedImage = MutableStateFlow<UiImageAttachment?>(null)
+    val attachedImage: StateFlow<UiImageAttachment?> = _attachedImage.asStateFlow()
+
+    fun setAttachedImage(attachment: UiImageAttachment?) {
+        _attachedImage.value = attachment
+    }
+
+    fun clearAttachedImage() {
+        _attachedImage.value = null
+    }
+
     fun refreshKeysState() {
         _hasAnyKey.value = com.example.util.ApiKeyStorage.hasAnyProviderConfigured(getApplication())
         _uiSelectionMode.value = selectionManager.getSelectionMode(_isIncognito.value)
         _uiSelectedProvider.value = selectionManager.getSelectedProvider(_isIncognito.value)
+        _geminiModelVariant.value = selectionManager.getGeminiModelVariant(_isIncognito.value)
     }
 
     private val _uiSelectionMode = MutableStateFlow(selectionManager.getSelectionMode(false))
@@ -85,6 +115,7 @@ class ChatViewModel @JvmOverloads constructor(
     val uiSelectedProvider = _uiSelectedProvider.asStateFlow()
 
     val lastResponseProvider = MutableStateFlow<String?>(null)
+    val lastResponseModel = MutableStateFlow<String?>(null)
 
     val availableProviders: List<com.example.ai.provider.AIProviderType>
         get() = selectionManager.getAvailableProviders()
@@ -156,7 +187,6 @@ class ChatViewModel @JvmOverloads constructor(
     private var incognitoMessagesList = mutableListOf<Message>()
 
     init {
-        // Automatically listen to the first conversation's messages
         observeMessagesForConversation(_currentConversationId.value)
     }
 
@@ -188,8 +218,11 @@ class ChatViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             _isIncognito.value = false
             incognitoMessagesList.clear()
+            (assistantService as? GeminiAssistantService)?.toolRegistry?.clearIncognitoSessionState()
             _pendingAction.value = null
             _activeProactiveDelivery.value = null
+            _attachedImage.value = null
+            _geminiModelVariant.value = selectionManager.getGeminiModelVariant(false)
             proactiveDeliveryCoordinator.clearRegistry()
             val newId = UUID.randomUUID().toString()
             _currentConversationId.value = newId
@@ -206,15 +239,16 @@ class ChatViewModel @JvmOverloads constructor(
             _isIncognito.value = enabled
             _pendingAction.value = null
             _activeProactiveDelivery.value = null
+            _attachedImage.value = null
+            _geminiModelVariant.value = selectionManager.getGeminiModelVariant(enabled)
             proactiveDeliveryCoordinator.clearRegistry()
+            (assistantService as? GeminiAssistantService)?.toolRegistry?.clearIncognitoSessionState()
             if (enabled) {
-                // Generate temporary session ID
                 val incognitoId = UUID.randomUUID().toString()
                 _currentConversationId.value = incognitoId
                 incognitoMessagesList.clear()
                 _messages.value = emptyList()
             } else {
-                // Exit incognito, reset to a normal conversation
                 startNewConversation()
             }
         }
@@ -229,6 +263,7 @@ class ChatViewModel @JvmOverloads constructor(
             incognitoMessagesList.clear()
             _pendingAction.value = null
             _activeProactiveDelivery.value = null
+            _attachedImage.value = null
             proactiveDeliveryCoordinator.clearRegistry()
             _currentConversationId.value = conversationId
             observeMessagesForConversation(conversationId)
@@ -242,7 +277,6 @@ class ChatViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             _pendingAction.value = null
             repository.deleteConversation(conversationId)
-            // If the deleted conversation was active, reset to a new one
             if (_currentConversationId.value == conversationId) {
                 startNewConversation()
             }
@@ -250,16 +284,32 @@ class ChatViewModel @JvmOverloads constructor(
     }
 
     fun sendMessage(content: String = _inputText.value) {
-        val trimmedContent = content.trim()
-        if (trimmedContent.isEmpty()) return
+        val currentImage = _attachedImage.value
+        val rawTrimmed = content.trim()
+        if (rawTrimmed.isEmpty() && currentImage == null) return
+
+        val trimmedContent = if (rawTrimmed.isEmpty() && currentImage != null) {
+            "Analyze this attached image."
+        } else {
+            rawTrimmed
+        }
 
         if (content == _inputText.value) {
             _inputText.value = ""
         }
+        _attachedImage.value = null
+
+        val displayedUserContent = if (currentImage != null && rawTrimmed.isNotEmpty()) {
+            "[Image Attached] $rawTrimmed"
+        } else if (currentImage != null) {
+            "[Image Attached] Analyze this image."
+        } else {
+            trimmedContent
+        }
 
         val timestamp = System.currentTimeMillis()
         val userMessage = Message(
-            content = trimmedContent,
+            content = displayedUserContent,
             sender = Sender.USER,
             timestamp = timestamp,
             status = MessageStatus.SENT
@@ -277,12 +327,12 @@ class ChatViewModel @JvmOverloads constructor(
             }
 
             val currentPending = _pendingAction.value
-            if (currentPending != null) {
+            if (currentPending != null && currentImage == null) {
                 if (isExplicitCommandPattern(trimmedContent)) {
                     _pendingAction.value = null
                     val wasCommand = handleExplicitCommand(trimmedContent, convId, isIncog)
                     if (!wasCommand) {
-                        generateAssistantResponse(trimmedContent, convId, isIncog)
+                        generateAssistantResponse(trimmedContent, convId, isIncog, null)
                     }
                     return@launch
                 }
@@ -337,15 +387,23 @@ class ChatViewModel @JvmOverloads constructor(
                 return@launch
             }
 
-            val wasCommand = handleExplicitCommand(trimmedContent, convId, isIncog)
+            val wasCommand = if (currentImage == null) {
+                handleExplicitCommand(trimmedContent, convId, isIncog)
+            } else {
+                false
+            }
             if (!wasCommand) {
-                // Trigger AI assistant response
-                generateAssistantResponse(trimmedContent, convId, isIncog)
+                generateAssistantResponse(trimmedContent, convId, isIncog, currentImage)
             }
         }
     }
 
-    private fun generateAssistantResponse(userPrompt: String, convId: String, isIncog: Boolean) {
+    private fun generateAssistantResponse(
+        userPrompt: String,
+        convId: String,
+        isIncog: Boolean,
+        imageAttachment: UiImageAttachment? = null
+    ) {
         viewModelScope.launch {
             _isThinking.value = true
 
@@ -400,6 +458,7 @@ class ChatViewModel @JvmOverloads constructor(
             }
 
             lastResponseProvider.value = null
+            lastResponseModel.value = null
             val providerCollectJob = viewModelScope.launch {
                 assistantService.lastUsedProviderFlow.collect { provider ->
                     if (provider != null) {
@@ -407,12 +466,43 @@ class ChatViewModel @JvmOverloads constructor(
                     }
                 }
             }
+            val modelCollectJob = viewModelScope.launch {
+                assistantService.lastUsedModelFlow.collect { model ->
+                    if (model != null) {
+                        lastResponseModel.value = model
+                    }
+                }
+            }
+
+            val activeVariant = _geminiModelVariant.value
+            val providerImage = imageAttachment?.toProviderAttachment()
 
             try {
-                assistantService.generateResponseStream(userPrompt, history, relevantMemories, fileContext, isIncognito = isIncog)
+                val streamFlow = if (providerImage != null || activeVariant != GeminiModelVariant.FLASH_2_5) {
+                    assistantService.generateResponseStream(
+                        userMessage = userPrompt,
+                        history = history,
+                        relevantMemories = relevantMemories,
+                        fileContext = fileContext,
+                        isIncognito = isIncog,
+                        imageAttachment = providerImage,
+                        preferredModelId = activeVariant.modelId
+                    )
+                } else {
+                    assistantService.generateResponseStream(
+                        userMessage = userPrompt,
+                        history = history,
+                        relevantMemories = relevantMemories,
+                        fileContext = fileContext,
+                        isIncognito = isIncog
+                    )
+                }
+
+                streamFlow
                     .catch { error ->
                         _isThinking.value = false
                         providerCollectJob.cancel()
+                        modelCollectJob.cancel()
                         val safeErr = com.example.util.PrivacyUtil.sanitizeErrorMessage(error.localizedMessage)
                         val errorMsg = "Error generating response: $safeErr"
                         updateMessageStatusAndSave(convId, assistantPlaceholderId, errorMsg, MessageStatus.ERROR, isIncog)
@@ -423,6 +513,7 @@ class ChatViewModel @JvmOverloads constructor(
                     }
             } finally {
                 providerCollectJob.cancel()
+                modelCollectJob.cancel()
             }
 
             if (!isIncog) {
@@ -484,13 +575,14 @@ class ChatViewModel @JvmOverloads constructor(
                 )
 
                 if (delivery != null) {
-                    // Mark as DELIVERED to match presentation lifecycle
                     val delivered = delivery.transitionTo(com.example.ai.proactive.ProactiveDeliveryState.DELIVERED)
                     proactiveDeliveryCoordinator.transitionDeliveryState(delivery.id, com.example.ai.proactive.ProactiveDeliveryState.DELIVERED)
                     _activeProactiveDelivery.value = delivered
 
+                    val cooldownKey = signal.sourceMemoryId ?: signal.id
+                    proactiveEngine.markAsSurfaced(cooldownKey)
                     proactiveTriggerPipeline.markEvaluated(request.boundedContext)
-                    break // Show at most one active proactive delivery to prevent flooding
+                    break
                 }
             }
         } catch (e: Exception) {
@@ -597,7 +689,6 @@ class ChatViewModel @JvmOverloads constructor(
         )
 
         if (isIncog) {
-            // Find and update index in-memory
             val index = incognitoMessagesList.indexOfFirst { it.id == messageId }
             if (index != -1) {
                 incognitoMessagesList[index] = updatedMessage
@@ -613,9 +704,11 @@ class ChatViewModel @JvmOverloads constructor(
         val isIncog = _isIncognito.value
         viewModelScope.launch {
             _pendingAction.value = null
+            _attachedImage.value = null
             if (isIncog) {
                 incognitoMessagesList.clear()
                 _messages.value = emptyList()
+                (assistantService as? GeminiAssistantService)?.toolRegistry?.clearIncognitoSessionState()
             } else {
                 repository.deleteConversation(convId)
                 startNewConversation()
@@ -626,7 +719,7 @@ class ChatViewModel @JvmOverloads constructor(
     }
 
     private suspend fun handleExplicitCommand(content: String, convId: String, isIncog: Boolean): Boolean {
-        if (isIncog) return false // No memory modifications in incognito mode
+        if (isIncog) return false
         
         val trimmed = content.trim()
         
@@ -638,11 +731,11 @@ class ChatViewModel @JvmOverloads constructor(
                 val newMemory = Memory(
                     id = UUID.randomUUID().toString(),
                     content = body,
-                    category = "Preferences", // Safe default for user-initiated memory
+                    category = "Preferences",
                     createdTimestamp = System.currentTimeMillis(),
                     lastUpdatedTimestamp = System.currentTimeMillis(),
                     sourceConversationId = convId,
-                    confidenceScore = 5, // Explicitly confirmed
+                    confidenceScore = 5,
                     state = "CONFIRMED"
                 )
                 memoryRepository.saveMemory(newMemory)
@@ -653,8 +746,6 @@ class ChatViewModel @JvmOverloads constructor(
 
         // 2. Don't remember this:
         if (trimmed.startsWith("Don't remember this:", ignoreCase = true) || trimmed.startsWith("Do not remember this:", ignoreCase = true)) {
-            val prefix = if (trimmed.startsWith("Don't remember this:", ignoreCase = true)) "Don't remember this:" else "Do not remember this:"
-            val body = trimmed.substring(prefix.length).trim()
             postSystemResponse("I will keep this conversation segment fully private and excluded from my long-term memory.", convId)
             return true
         }
@@ -757,14 +848,12 @@ class ChatViewModel @JvmOverloads constructor(
                     matches.size == 1 -> {
                         val match = matches.first()
                         
-                        // Supersede old memory
                         val superseded = match.copy(
                             state = "SUPERSEDED",
                             lastUpdatedTimestamp = System.currentTimeMillis()
                         )
                         memoryRepository.saveMemory(superseded)
                         
-                        // Insert new memory
                         val newMemory = Memory(
                             id = UUID.randomUUID().toString(),
                             content = newContent,
@@ -804,7 +893,6 @@ class ChatViewModel @JvmOverloads constructor(
         )
         repository.saveMessage(convId, assistantMessage, false)
         
-        // Instantly refresh the UI messages list so the user gets direct feedback
         val allMsgs = repository.getMessagesForConversation(convId).first()
         _messages.value = allMsgs
     }

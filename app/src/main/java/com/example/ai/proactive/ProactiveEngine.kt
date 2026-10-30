@@ -1,19 +1,33 @@
 package com.example.ai.proactive
 
+import com.example.AetherApplication
 import com.example.ai.TimeProvider
 import com.example.ai.SystemTimeProvider
+import com.example.data.local.dao.ProactiveCooldownDao
+import com.example.data.local.entity.ProactiveCooldownEntity
 import com.example.data.model.Memory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
-class ProactiveEngine(
-    private val timeProvider: TimeProvider = SystemTimeProvider()
+class ProactiveEngine @JvmOverloads constructor(
+    private val timeProvider: TimeProvider = SystemTimeProvider(),
+    private val cooldownDaoProvider: () -> ProactiveCooldownDao? = { resolveDefaultCooldownDao() }
 ) {
     // Thread-safe repository for cooldown tracking of surfaced memories: memoryId -> lastSurfacedTimeMillis
     private val surfacedSignals = ConcurrentHashMap<String, Long>()
 
     companion object {
+        private fun resolveDefaultCooldownDao(): ProactiveCooldownDao? {
+            return try {
+                val app = AetherApplication.appContext as? AetherApplication
+                app?.database?.proactiveCooldownDao()
+            } catch (e: Throwable) {
+                null
+            }
+        }
+
         private val STOPWORDS = setOf(
             "the", "a", "an", "and", "or", "but", "if", "then", "else", "is", "are", "was", "were", 
             "be", "been", "being", "to", "from", "in", "on", "at", "by", "for", "with", "about", 
@@ -33,16 +47,43 @@ class ProactiveEngine(
 
     /**
      * Marks a signal (memory) as surfaced to start its cooldown window.
+     * Persists the timestamp in Room so cooldowns survive app restarts.
      */
     fun markAsSurfaced(memoryId: String) {
-        surfacedSignals[memoryId] = timeProvider.currentTimeMillis()
+        val now = timeProvider.currentTimeMillis()
+        surfacedSignals[memoryId] = now
+        try {
+            val dao = cooldownDaoProvider()
+            if (dao != null) {
+                runBlocking(Dispatchers.IO) {
+                    dao.upsertCooldown(
+                        ProactiveCooldownEntity(
+                            signalId = memoryId,
+                            lastSurfacedTimestamp = now
+                        )
+                    )
+                }
+            }
+        } catch (e: Throwable) {
+            // Non-fatal fallback to in-memory map if database is unavailable in standalone JVM tests
+        }
     }
 
     /**
-     * Clears cooldowns (useful for tests).
+     * Clears cooldowns in both memory and Room (useful for tests).
      */
     fun clearCooldowns() {
         surfacedSignals.clear()
+        try {
+            val dao = cooldownDaoProvider()
+            if (dao != null) {
+                runBlocking(Dispatchers.IO) {
+                    dao.clearAll()
+                }
+            }
+        } catch (e: Throwable) {
+            // Ignore in non-Room unit test environments
+        }
     }
 
     /**
@@ -156,8 +197,17 @@ class ProactiveEngine(
                 )
             }
 
-            // 5. Cooldown check
-            val lastSurfaced = surfacedSignals[memory.id] ?: 0L
+            // 5. Cooldown check (in-memory + Room persisted across restarts)
+            val inMemorySurfaced = surfacedSignals[memory.id] ?: 0L
+            val persistedSurfaced = try {
+                cooldownDaoProvider()?.getCooldown(memory.id)?.lastSurfacedTimestamp ?: 0L
+            } catch (e: Throwable) {
+                0L
+            }
+            val lastSurfaced = maxOf(inMemorySurfaced, persistedSurfaced)
+            if (lastSurfaced > 0L) {
+                surfacedSignals[memory.id] = lastSurfaced
+            }
             if (currentTime - lastSurfaced < preferences.cooldownDurationMs) {
                 return@mapNotNull ProactiveDecision(
                     decision = ProactiveAction.STAY_SILENT,

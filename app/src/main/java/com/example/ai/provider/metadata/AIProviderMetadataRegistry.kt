@@ -19,7 +19,7 @@ class AIProviderMetadataRegistry(
     }
 
     private fun registerDefaultProviders() {
-        // 1. Gemini
+        // 1. Gemini (Primary engine - Official Gemini 2.5 Flash & Pro)
         val geminiCapabilities = ProviderCapabilities(
             streaming = CapabilitySupport.SUPPORTED,
             toolCalling = CapabilitySupport.SUPPORTED,
@@ -28,19 +28,35 @@ class AIProviderMetadataRegistry(
             maxContextTokens = 1048576
         )
         val geminiDefaultModel = ModelMetadata(
+            modelId = "gemini-3.8-flash",
+            displayName = "Gemini 3.8 Flash",
+            providerType = AIProviderType.GEMINI,
+            capabilities = geminiCapabilities,
+            maxContextTokens = 1048576,
+            isDefault = true
+        )
+        val geminiProModel = ModelMetadata(
+            modelId = "gemini-3.1-pro-preview",
+            displayName = "Gemini 3.1 Pro",
+            providerType = AIProviderType.GEMINI,
+            capabilities = geminiCapabilities,
+            maxContextTokens = 1048576,
+            isDefault = false
+        )
+        val geminiFallbackModel = ModelMetadata(
             modelId = "gemini-3.5-flash",
             displayName = "Gemini 3.5 Flash",
             providerType = AIProviderType.GEMINI,
             capabilities = geminiCapabilities,
             maxContextTokens = 1048576,
-            isDefault = true
+            isDefault = false
         )
         registerProvider(
             ProviderMetadata(
                 type = AIProviderType.GEMINI,
                 displayName = "Gemini",
                 capabilities = geminiCapabilities,
-                models = listOf(geminiDefaultModel),
+                models = listOf(geminiDefaultModel, geminiProModel, geminiFallbackModel),
                 defaultModelId = geminiDefaultModel.modelId,
                 isActive = true
             )

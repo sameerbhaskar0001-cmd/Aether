@@ -72,13 +72,24 @@ class RemindersTool(
     // In-memory isolated storage for Incognito mode and test fallbacks
     private val incognitoReminders = ConcurrentHashMap<String, ReminderEntity>()
 
+    /**
+     * Clears transient session-only reminders created during an Incognito session.
+     */
+    fun clearIncognitoSession() {
+        incognitoReminders.clear()
+    }
+
     override suspend fun execute(arguments: Map<String, Any?>): ToolResult {
         val action = arguments["action"]?.toString()?.trim()?.lowercase() ?: ""
         val id = arguments["id"]?.toString()?.trim()
         val title = arguments["title"]?.toString() ?: ""
         val timeString = arguments["time"]?.toString()?.trim() ?: ""
         
-        val isIncognito = arguments["is_incognito"] as? Boolean ?: false
+        val isIncognito = when (val raw = arguments["is_incognito"]) {
+            is Boolean -> raw
+            is String -> raw.trim().equals("true", ignoreCase = true)
+            else -> false
+        }
         val useInMemory = isIncognito || reminderDao == null
 
         if (action.isBlank()) {
@@ -111,16 +122,19 @@ class RemindersTool(
                         createdAt = now
                     )
 
-                    // 1. Save Reminder
+                    // 1. Save Reminder (session-only in memory when Incognito)
                     if (useInMemory) {
                         incognitoReminders[reminderId] = reminder
                     } else {
                         reminderDao?.insert(reminder)
                     }
 
-                    // 2. Schedule Notification via AlarmManager
-                    if (context != null) {
+                    // 2. Schedule Notification via AlarmManager ONLY when NOT in Incognito mode
+                    val alarmScheduled = if (!isIncognito && context != null) {
                         scheduleAlarm(context, reminderId, title, triggerTime)
+                        true
+                    } else {
+                        false
                     }
 
                     val json = JSONObject().apply {
@@ -129,6 +143,8 @@ class RemindersTool(
                         put("title", title)
                         put("trigger_time", triggerTime)
                         put("is_incognito", isIncognito)
+                        put("session_only", isIncognito)
+                        put("alarm_scheduled", alarmScheduled)
                     }
                     ToolResult.success(name, json.toString())
                 }
@@ -197,8 +213,8 @@ class RemindersTool(
                         return ToolResult.error(name, "Reminder with ID '$id' not found.")
                     }
 
-                    // Cancel pending intent
-                    if (context != null) {
+                    // Cancel pending intent ONLY when NOT in Incognito mode
+                    if (!isIncognito && context != null) {
                         cancelAlarm(context, id)
                     }
 

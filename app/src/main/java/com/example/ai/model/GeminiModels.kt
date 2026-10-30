@@ -51,8 +51,15 @@ data class GeminiFunctionResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class GeminiInlineData(
+    @Json(name = "mime_type") val mimeType: String,
+    @Json(name = "data") val data: String
+)
+
+@JsonClass(generateAdapter = true)
 data class Part(
     @Json(name = "text") val text: String? = null,
+    @Json(name = "inline_data") val inlineData: GeminiInlineData? = null,
     @Json(name = "functionCall") val functionCall: GeminiFunctionCall? = null,
     @Json(name = "functionResponse") val functionResponse: GeminiFunctionResponse? = null
 )

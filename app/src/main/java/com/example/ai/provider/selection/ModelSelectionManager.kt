@@ -6,7 +6,6 @@ import com.example.ai.provider.cost.CostQuotaRegistry
 import com.example.ai.provider.health.ProviderHealthTracker
 import com.example.ai.provider.metadata.AIProviderMetadataRegistry
 import com.example.ai.provider.models.ProviderRequest
-import com.example.ai.provider.openrouter.OpenRouterProvider
 import com.example.ai.provider.performance.ProviderPerformanceTracker
 import com.example.ai.provider.routing.AutoRoutingEngine
 import com.example.ai.provider.routing.RoutingDecision
@@ -17,8 +16,33 @@ enum class SelectionMode {
     MANUAL
 }
 
+enum class GeminiModelVariant(
+    val modelId: String,
+    val displayName: String,
+    val fallbackModelId: String = "gemini-3.5-flash"
+) {
+    FLASH_3_8("gemini-3.8-flash", "3.8 Flash", "gemini-3.5-flash"),
+    PRO_3_1("gemini-3.1-pro-preview", "3.1 Pro", "gemini-3.8-flash");
+
+    companion object {
+        // Aliases for source and backward binary compatibility
+        val FLASH_2_5: GeminiModelVariant get() = FLASH_3_8
+        val PRO_2_5: GeminiModelVariant get() = PRO_3_1
+        val PRO_3_8: GeminiModelVariant get() = PRO_3_1
+
+        fun fromPreferenceOrModelId(raw: String?): GeminiModelVariant {
+            return when (raw?.trim()) {
+                "PRO_3_1", "PRO_2_5", "PRO_3_8", "gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-3.8-pro" -> PRO_3_1
+                "FLASH_3_8", "FLASH_2_5", "gemini-3.8-flash", "gemini-2.5-flash" -> FLASH_3_8
+                else -> FLASH_3_8
+            }
+        }
+    }
+}
+
 /**
- * Manages model and provider selection with AUTO and MANUAL modes.
+ * Manages model and provider selection with AUTO and MANUAL modes,
+ * plus official Gemini 2.5 Flash / Pro variant switching.
  * Integrates AutoRoutingEngine for deterministic, signal-based provider routing.
  * Ensures strict privacy/Incognito isolation.
  */
@@ -42,6 +66,7 @@ open class ModelSelectionManager(
     // In-memory state for Incognito isolation
     private var incognitoMode: SelectionMode? = null
     private var incognitoProvider: AIProviderType? = null
+    private var incognitoGeminiVariant: GeminiModelVariant? = null
 
     val metadataRegistry: AIProviderMetadataRegistry by lazy {
         AIProviderMetadataRegistry(isKeyConfigured = { isProviderAvailable(it) })
@@ -62,6 +87,30 @@ open class ModelSelectionManager(
     companion object {
         private const val KEY_MODE = "selection_mode"
         private const val KEY_PROVIDER = "selected_provider"
+        private const val KEY_GEMINI_VARIANT = "gemini_model_variant"
+    }
+
+    /**
+     * Gets the active Gemini model variant (2.5 Flash vs 2.5 Pro), respecting Incognito isolation
+     * and migrating any legacy 3.8 preference keys to official 2.5 model variants.
+     */
+    fun getGeminiModelVariant(isIncognito: Boolean): GeminiModelVariant {
+        if (isIncognito) {
+            return incognitoGeminiVariant ?: GeminiModelVariant.FLASH_2_5
+        }
+        val variantStr = sharedPrefs.getString(KEY_GEMINI_VARIANT, GeminiModelVariant.FLASH_2_5.name)
+        return GeminiModelVariant.fromPreferenceOrModelId(variantStr)
+    }
+
+    /**
+     * Saves the Gemini model variant. If isIncognito is true, keeps it in-memory only.
+     */
+    fun setGeminiModelVariant(variant: GeminiModelVariant, isIncognito: Boolean) {
+        if (isIncognito) {
+            incognitoGeminiVariant = variant
+        } else {
+            sharedPrefs.edit().putString(KEY_GEMINI_VARIANT, variant.name).apply()
+        }
     }
 
     /**
@@ -95,17 +144,19 @@ open class ModelSelectionManager(
      * If the persisted provider is unconfigured/unavailable, safely defaults to GEMINI.
      */
     fun getSelectedProvider(isIncognito: Boolean): AIProviderType {
-        val provider = if (isIncognito) {
-            incognitoProvider ?: AIProviderType.GEMINI
-        } else {
-            val providerStr = sharedPrefs.getString(KEY_PROVIDER, AIProviderType.GEMINI.name)
-            try {
-                AIProviderType.valueOf(providerStr ?: AIProviderType.GEMINI.name)
-            } catch (e: Exception) {
-                AIProviderType.GEMINI
-            }
+        if (isIncognito) {
+            return incognitoProvider ?: AIProviderType.GEMINI
         }
-        return if (isProviderAvailable(provider)) provider else AIProviderType.GEMINI
+        val providerStr = sharedPrefs.getString(KEY_PROVIDER, AIProviderType.GEMINI.name)
+        val provider = try {
+            AIProviderType.valueOf(providerStr ?: AIProviderType.GEMINI.name)
+        } catch (e: Exception) {
+            AIProviderType.GEMINI
+        }
+        if (getSelectionMode(false) == SelectionMode.MANUAL) {
+            return provider
+        }
+        return if (isProviderAvailable(provider)) provider else (getAvailableProviders().firstOrNull() ?: AIProviderType.GEMINI)
     }
 
     /**

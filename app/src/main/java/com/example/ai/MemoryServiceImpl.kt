@@ -28,8 +28,10 @@ object MemoryConstants {
     const val STALE_PENALTY = 1.5f
 }
 
-class MemoryServiceImpl(
-    private val timeProvider: TimeProvider = SystemTimeProvider()
+class MemoryServiceImpl @JvmOverloads constructor(
+    private val timeProvider: TimeProvider = SystemTimeProvider(),
+    private val apiService: com.example.ai.network.GeminiApiService = RetrofitClient.service,
+    private val apiKeyProvider: () -> String = { com.example.util.ApiKeyStorage.getGeminiKey() }
 ) : MemoryService {
 
     companion object {
@@ -157,34 +159,44 @@ class MemoryServiceImpl(
         return false
     }
 
+    /**
+     * Strictly filters conversation messages so ONLY user-authored messages (Sender.USER)
+     * are ever used as factual sources for memory extraction, never assistant responses.
+     */
+    internal fun filterUserAuthoredMessagesForExtraction(messages: List<Message>): List<Message> {
+        return messages
+            .filter { msg ->
+                val content = msg.content.trim()
+                val isProtected = content.startsWith("Don't remember this:", ignoreCase = true) ||
+                                  content.startsWith("Do not remember this:", ignoreCase = true)
+                msg.sender == com.example.data.model.Sender.USER &&
+                    msg.status == MessageStatus.SENT &&
+                    content.isNotBlank() &&
+                    !isProtected
+            }
+            .takeLast(10)
+    }
+
     override suspend fun extractMemoryDeltas(
         conversationId: String,
         messages: List<Message>,
         existingMemories: List<Memory>
     ): List<MemoryDelta> = withContext(Dispatchers.IO) {
-        val apiKey = BuildConfig.GEMINI_API_KEY
+        val apiKey = apiKeyProvider()
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
             Log.e(TAG, "Gemini API key is not configured for memory extraction.")
             return@withContext emptyList()
         }
 
-        // Keep last 10 messages for context so memory extraction is focused and fast, filtering out protected payloads
-        val conversationHistorySegment = messages
-            .filter { msg ->
-                val content = msg.content.trim()
-                val isProtected = content.startsWith("Don't remember this:", ignoreCase = true) ||
-                                  content.startsWith("Do not remember this:", ignoreCase = true)
-                msg.status == MessageStatus.SENT && content.isNotBlank() && !isProtected
-            }
-            .takeLast(10)
+        // Strictly keep ONLY user-authored messages (never assistant responses)
+        val userHistorySegment = filterUserAuthoredMessagesForExtraction(messages)
 
-        if (conversationHistorySegment.isEmpty()) return@withContext emptyList()
+        if (userHistorySegment.isEmpty()) return@withContext emptyList()
 
-        // Build conversation transcript text
+        // Build user-only transcript text so assistant responses can never pollute memory extraction
         val transcript = StringBuilder()
-        conversationHistorySegment.forEach { msg ->
-            val senderLabel = if (msg.sender == com.example.data.model.Sender.USER) "User" else "Aether"
-            transcript.append("$senderLabel: ${msg.content}\n")
+        userHistorySegment.forEach { msg ->
+            transcript.append("User: ${msg.content}\n")
         }
 
         // Convert existing memories to a lightweight JSON for context
@@ -283,7 +295,7 @@ class MemoryServiceImpl(
 
         try {
             val response = retryWithBackoff {
-                RetrofitClient.service.generateContent(apiKey, request)
+                apiService.generateContent(apiKey, request)
             }
             val rawResponseText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text ?: ""
             val cleanJsonText = cleanJson(rawResponseText)
@@ -301,6 +313,18 @@ class MemoryServiceImpl(
                 val category = map["category"] as? String
                 val content = map["content"] as? String
                 val existingMemoryId = map["existingMemoryId"] as? String
+
+                // Defense-in-depth: reject any delta that attributes facts to the assistant rather than the user
+                if (action.equals("ADD", ignoreCase = true) || action.equals("UPDATE", ignoreCase = true)) {
+                    val lowerContent = content?.lowercase()?.trim() ?: ""
+                    if (lowerContent.startsWith("assistant ") ||
+                        lowerContent.startsWith("aether ") ||
+                        lowerContent.contains("assistant suggested") ||
+                        lowerContent.contains("assistant assumed")
+                    ) {
+                        return@mapNotNull null
+                    }
+                }
                 
                 val temporalType = map["temporalType"] as? String ?: "PERSISTENT"
                 val expirationDateStr = map["expirationDate"] as? String

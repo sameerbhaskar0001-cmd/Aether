@@ -20,6 +20,15 @@ data class ProviderMessage(
 )
 
 /**
+ * Multimodal image attachment passed to AIProvider.
+ */
+data class ProviderImageAttachment(
+    val base64Data: String,
+    val mimeType: String = "image/jpeg",
+    val fileName: String = "image.jpg"
+)
+
+/**
  * Domain-level request model sent to an AIProvider.
  */
 data class ProviderRequest(
@@ -34,7 +43,9 @@ data class ProviderRequest(
     val requiresToolCalling: Boolean = false,
     val hasVisionInput: Boolean = false,
     val requiresWebSearch: Boolean = false,
-    val userPreferredProvider: com.example.ai.provider.AIProviderType? = null
+    val userPreferredProvider: com.example.ai.provider.AIProviderType? = null,
+    val imageAttachment: ProviderImageAttachment? = null,
+    val preferredModelId: String? = null
 )
 
 /**
@@ -44,7 +55,9 @@ data class ProviderStreamChunk(
     val textDelta: String,
     val isComplete: Boolean = false,
     val providerName: String,
-    val accumulatedText: String = textDelta
+    val accumulatedText: String = textDelta,
+    val activeModelId: String? = null,
+    val isModelFallback: Boolean = false
 )
 
 /**
@@ -52,7 +65,9 @@ data class ProviderStreamChunk(
  */
 data class ProviderResponse(
     val text: String,
-    val providerName: String
+    val providerName: String,
+    val activeModelId: String? = null,
+    val isModelFallback: Boolean = false
 )
 
 /**

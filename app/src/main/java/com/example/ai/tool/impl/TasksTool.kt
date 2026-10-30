@@ -80,6 +80,10 @@ class TasksTool(
     // In-memory isolated storage for Incognito mode and test fallbacks
     private val incognitoTasks = ConcurrentHashMap<String, TaskEntity>()
 
+    fun clearIncognitoSession() {
+        incognitoTasks.clear()
+    }
+
     override suspend fun execute(arguments: Map<String, Any?>): ToolResult {
         val action = arguments["action"]?.toString()?.trim()?.lowercase() ?: ""
         val id = arguments["id"]?.toString()?.trim()

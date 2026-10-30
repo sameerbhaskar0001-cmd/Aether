@@ -1,7 +1,6 @@
 package com.example.ai.provider
 
 import android.util.Log
-import com.example.BuildConfig
 import com.example.ai.SystemTimeProvider
 import com.example.ai.TimeProvider
 import com.example.ai.model.Content
@@ -12,14 +11,13 @@ import com.example.ai.model.GeminiFunctionDeclaration
 import com.example.ai.model.GeminiSchema
 import com.example.ai.model.GeminiFunctionCall
 import com.example.ai.model.GeminiFunctionResponse
+import com.example.ai.model.GeminiInlineData
 import com.example.ai.model.GeminiToolConfig
 import com.example.ai.network.GeminiApiService
 import com.example.ai.network.RetrofitClient
 import com.example.ai.provider.metadata.CapabilitySupport
 import com.example.ai.provider.metadata.ProviderCapabilities
-import com.example.ai.provider.models.ProviderErrorCategory
 import com.example.ai.provider.models.ProviderException
-import com.example.ai.provider.models.ProviderMessage
 import com.example.ai.provider.models.ProviderRequest
 import com.example.ai.provider.models.ProviderResponse
 import com.example.ai.provider.models.ProviderRole
@@ -34,6 +32,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import okhttp3.ResponseBody
 import retrofit2.HttpException
 import java.io.IOException
 import java.lang.Exception
@@ -44,15 +43,67 @@ class GeminiProvider(
     private val apiKeyProvider: () -> String = { com.example.util.ApiKeyStorage.getGeminiKey() },
     private val toolRegistry: ToolRegistry? = null,
     private val toolOrchestrator: ToolOrchestrator? = null,
-    private val apiService: GeminiApiService = RetrofitClient.service
+    private val apiService: GeminiApiService = RetrofitClient.service,
+    private val dynamicApiService: com.example.ai.network.GeminiDynamicApiService = RetrofitClient.dynamicService
 ) : AIProvider {
 
     override val type: AIProviderType = AIProviderType.GEMINI
     override val providerName: String = "Gemini"
     override val capabilities: ProviderCapabilities = CAPABILITIES
 
+    @Volatile
+    var lastActiveModelId: String = DEFAULT_MODEL_ID
+        private set
+
+    @Volatile
+    var lastCallUsedFallback: Boolean = false
+        private set
+
+    private data class ResolvedModelCall<T>(
+        val data: T,
+        val activeModelId: String,
+        val isFallback: Boolean
+    )
+
     companion object {
         private const val TAG = "GeminiProvider"
+        const val DEFAULT_MODEL_ID = "gemini-3.8-flash"
+        const val PRO_MODEL_ID = "gemini-3.1-pro-preview"
+        const val LIVE_VERIFIED_FALLBACK_ID = "gemini-3.5-flash"
+        const val SECONDARY_FALLBACK_ID = "gemini-flash-latest"
+        const val FALLBACK_MODEL_ID = "gemini-2.0-flash"
+
+        val OFFICIAL_MODEL_CATALOG = setOf(
+            DEFAULT_MODEL_ID,
+            PRO_MODEL_ID,
+            LIVE_VERIFIED_FALLBACK_ID,
+            SECONDARY_FALLBACK_ID,
+            FALLBACK_MODEL_ID,
+            "gemini-2.5-flash",
+            "gemini-2.5-pro"
+        )
+
+        fun normalizeModelId(rawModelId: String?): String {
+            return when (val cleaned = rawModelId?.trim().orEmpty()) {
+                "", "gemini-3.8-flash", DEFAULT_MODEL_ID -> DEFAULT_MODEL_ID
+                "gemini-3.1-pro-preview", PRO_MODEL_ID -> PRO_MODEL_ID
+                "gemini-3.8-pro", "gemini-2.5-pro" -> PRO_MODEL_ID
+                "gemini-2.5-flash" -> DEFAULT_MODEL_ID
+                LIVE_VERIFIED_FALLBACK_ID -> LIVE_VERIFIED_FALLBACK_ID
+                SECONDARY_FALLBACK_ID -> SECONDARY_FALLBACK_ID
+                FALLBACK_MODEL_ID -> FALLBACK_MODEL_ID
+                else -> if (cleaned in OFFICIAL_MODEL_CATALOG) cleaned else DEFAULT_MODEL_ID
+            }
+        }
+
+        fun fallbackChainFor(requestedModelId: String): List<String> {
+            return when (normalizeModelId(requestedModelId)) {
+                PRO_MODEL_ID -> listOf(DEFAULT_MODEL_ID, LIVE_VERIFIED_FALLBACK_ID, SECONDARY_FALLBACK_ID)
+                DEFAULT_MODEL_ID -> listOf(LIVE_VERIFIED_FALLBACK_ID, SECONDARY_FALLBACK_ID, FALLBACK_MODEL_ID)
+                else -> listOf(LIVE_VERIFIED_FALLBACK_ID, SECONDARY_FALLBACK_ID, FALLBACK_MODEL_ID)
+            }
+        }
+
         val CAPABILITIES = ProviderCapabilities(
             streaming = CapabilitySupport.SUPPORTED,
             toolCalling = CapabilitySupport.SUPPORTED,
@@ -63,6 +114,106 @@ class GeminiProvider(
         private const val DEFAULT_SYSTEM_INSTRUCTION =
             "You are Aether, an autonomous cognitive workspace assistant designed for absolute focus and zero noise. " +
             "Respond directly, concisely, and accurately without conversational filler or pleasantries unless requested."
+    }
+
+    private fun shouldAttemptModelFallback(e: Exception): Boolean {
+        return when (e) {
+            is HttpException -> e.code() == 404 || e.code() == 503 || e.code() == 429
+            is java.io.IOException -> true
+            else -> false
+        }
+    }
+
+    private suspend fun invokeStreamForModel(
+        modelId: String,
+        apiKey: String,
+        generateRequest: GenerateContentRequest
+    ): ResponseBody {
+        val useDynamic = modelId != DEFAULT_MODEL_ID || dynamicApiService !== RetrofitClient.dynamicService
+        return if (useDynamic && (apiService === RetrofitClient.service || dynamicApiService !== RetrofitClient.dynamicService)) {
+            dynamicApiService.generateContentStream(modelId, apiKey, generateRequest)
+        } else {
+            apiService.generateContentStream(apiKey, generateRequest)
+        }
+    }
+
+    private suspend fun invokeGenerateForModel(
+        modelId: String,
+        apiKey: String,
+        generateRequest: GenerateContentRequest
+    ): GenerateContentResponse {
+        val useDynamic = modelId != DEFAULT_MODEL_ID || dynamicApiService !== RetrofitClient.dynamicService
+        return if (useDynamic && (apiService === RetrofitClient.service || dynamicApiService !== RetrofitClient.dynamicService)) {
+            dynamicApiService.generateContent(modelId, apiKey, generateRequest)
+        } else {
+            apiService.generateContent(apiKey, generateRequest)
+        }
+    }
+
+    private suspend fun executeStreamCall(
+        apiKey: String,
+        generateRequest: GenerateContentRequest,
+        preferredModelId: String?
+    ): ResolvedModelCall<ResponseBody> {
+        val primaryModel = normalizeModelId(preferredModelId)
+        val wasOriginallyInvalid = !preferredModelId.isNullOrBlank() && preferredModelId.trim() !in OFFICIAL_MODEL_CATALOG
+        try {
+            val body = invokeStreamForModel(primaryModel, apiKey, generateRequest)
+            lastActiveModelId = primaryModel
+            lastCallUsedFallback = wasOriginallyInvalid
+            return ResolvedModelCall(body, primaryModel, wasOriginallyInvalid)
+        } catch (e: Exception) {
+            if (!shouldAttemptModelFallback(e)) throw e
+            var lastError: Exception = e
+            val canTryDynamicFallbacks = apiService === RetrofitClient.service || dynamicApiService !== RetrofitClient.dynamicService
+            if (canTryDynamicFallbacks) {
+                for (fallbackModel in fallbackChainFor(primaryModel)) {
+                    try {
+                        val body = invokeStreamForModel(fallbackModel, apiKey, generateRequest)
+                        lastActiveModelId = fallbackModel
+                        lastCallUsedFallback = true
+                        return ResolvedModelCall(body, fallbackModel, true)
+                    } catch (fallbackErr: Exception) {
+                        lastError = fallbackErr
+                        if (!shouldAttemptModelFallback(fallbackErr)) throw fallbackErr
+                    }
+                }
+            }
+            throw lastError
+        }
+    }
+
+    private suspend fun executeGenerateCall(
+        apiKey: String,
+        generateRequest: GenerateContentRequest,
+        preferredModelId: String?
+    ): ResolvedModelCall<GenerateContentResponse> {
+        val primaryModel = normalizeModelId(preferredModelId)
+        val wasOriginallyInvalid = !preferredModelId.isNullOrBlank() && preferredModelId.trim() !in OFFICIAL_MODEL_CATALOG
+        try {
+            val response = invokeGenerateForModel(primaryModel, apiKey, generateRequest)
+            lastActiveModelId = primaryModel
+            lastCallUsedFallback = wasOriginallyInvalid
+            return ResolvedModelCall(response, primaryModel, wasOriginallyInvalid)
+        } catch (e: Exception) {
+            if (!shouldAttemptModelFallback(e)) throw e
+            var lastError: Exception = e
+            val canTryDynamicFallbacks = apiService === RetrofitClient.service || dynamicApiService !== RetrofitClient.dynamicService
+            if (canTryDynamicFallbacks) {
+                for (fallbackModel in fallbackChainFor(primaryModel)) {
+                    try {
+                        val response = invokeGenerateForModel(fallbackModel, apiKey, generateRequest)
+                        lastActiveModelId = fallbackModel
+                        lastCallUsedFallback = true
+                        return ResolvedModelCall(response, fallbackModel, true)
+                    } catch (fallbackErr: Exception) {
+                        lastError = fallbackErr
+                        if (!shouldAttemptModelFallback(fallbackErr)) throw fallbackErr
+                    }
+                }
+            }
+            throw lastError
+        }
     }
 
     override fun generateStream(request: ProviderRequest): Flow<ProviderStreamChunk> = flow {
@@ -76,7 +227,9 @@ class GeminiProvider(
                 ProviderStreamChunk(
                     textDelta = authErr.message ?: "API Key missing",
                     isComplete = true,
-                    providerName = providerName
+                    providerName = providerName,
+                    activeModelId = normalizeModelId(request.preferredModelId),
+                    isModelFallback = false
                 )
             )
             return@flow
@@ -85,7 +238,10 @@ class GeminiProvider(
         val generateRequest = buildGeminiRequest(request)
 
         try {
-            val response = apiService.generateContentStream(apiKey, generateRequest)
+            val resolvedStream = executeStreamCall(apiKey, generateRequest, request.preferredModelId)
+            val response = resolvedStream.data
+            var activeModel = resolvedStream.activeModelId
+            var usedFallback = resolvedStream.isFallback
             val currentText = StringBuilder()
             var detectedFunctionCall: GeminiFunctionCall? = null
 
@@ -115,7 +271,9 @@ class GeminiProvider(
                                     textDelta = textChunk,
                                     isComplete = false,
                                     providerName = providerName,
-                                    accumulatedText = currentText.toString()
+                                    accumulatedText = currentText.toString(),
+                                    activeModelId = activeModel,
+                                    isModelFallback = usedFallback
                                 )
                             )
                         }
@@ -165,7 +323,10 @@ class GeminiProvider(
                 val secondRequest = generateRequest.copy(contents = nextContents)
 
                 // Stream second turn output
-                val secondResponse = apiService.generateContentStream(apiKey, secondRequest)
+                val resolvedSecondStream = executeStreamCall(apiKey, secondRequest, activeModel)
+                val secondResponse = resolvedSecondStream.data
+                activeModel = resolvedSecondStream.activeModelId
+                usedFallback = usedFallback || resolvedSecondStream.isFallback
                 val secondText = StringBuilder()
 
                 secondResponse.byteStream().bufferedReader().use { reader ->
@@ -185,7 +346,9 @@ class GeminiProvider(
                                     ProviderStreamChunk(
                                         textDelta = secondText.toString(),
                                         isComplete = false,
-                                        providerName = providerName
+                                        providerName = providerName,
+                                        activeModelId = activeModel,
+                                        isModelFallback = usedFallback
                                     )
                                 )
                             }
@@ -197,14 +360,18 @@ class GeminiProvider(
                 }
 
                 if (secondText.isEmpty()) {
-                    val fallbackResponse = apiService.generateContent(apiKey, secondRequest)
-                    val text = fallbackResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                    val fallbackResolved = executeGenerateCall(apiKey, secondRequest, activeModel)
+                    activeModel = fallbackResolved.activeModelId
+                    usedFallback = usedFallback || fallbackResolved.isFallback
+                    val text = fallbackResolved.data.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                     val finalText = if (!text.isNullOrBlank()) text else "Aether returned an empty response."
                     emit(
                         ProviderStreamChunk(
                             textDelta = finalText,
                             isComplete = true,
-                            providerName = providerName
+                            providerName = providerName,
+                            activeModelId = activeModel,
+                            isModelFallback = usedFallback
                         )
                     )
                 } else {
@@ -212,14 +379,18 @@ class GeminiProvider(
                         ProviderStreamChunk(
                             textDelta = secondText.toString(),
                             isComplete = true,
-                            providerName = providerName
+                            providerName = providerName,
+                            activeModelId = activeModel,
+                            isModelFallback = usedFallback
                         )
                     )
                 }
             } else {
                 if (currentText.isEmpty()) {
-                    val fallbackResponse = apiService.generateContent(apiKey, generateRequest)
-                    val text = fallbackResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                    val fallbackResolved = executeGenerateCall(apiKey, generateRequest, activeModel)
+                    activeModel = fallbackResolved.activeModelId
+                    usedFallback = usedFallback || fallbackResolved.isFallback
+                    val text = fallbackResolved.data.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                     val finalText = if (!text.isNullOrBlank()) {
                         text
                     } else {
@@ -229,7 +400,9 @@ class GeminiProvider(
                         ProviderStreamChunk(
                             textDelta = finalText,
                             isComplete = true,
-                            providerName = providerName
+                            providerName = providerName,
+                            activeModelId = activeModel,
+                            isModelFallback = usedFallback
                         )
                     )
                 } else {
@@ -237,7 +410,9 @@ class GeminiProvider(
                         ProviderStreamChunk(
                             textDelta = currentText.toString(),
                             isComplete = true,
-                            providerName = providerName
+                            providerName = providerName,
+                            activeModelId = activeModel,
+                            isModelFallback = usedFallback
                         )
                     )
                 }
@@ -257,10 +432,13 @@ class GeminiProvider(
             throw ProviderException.AuthenticationError("API Key is missing or invalid.")
         }
 
-        var generateRequest = buildGeminiRequest(request)
+        val generateRequest = buildGeminiRequest(request)
 
         try {
-            var response = apiService.generateContent(apiKey, generateRequest)
+            var resolvedCall = executeGenerateCall(apiKey, generateRequest, request.preferredModelId)
+            var response = resolvedCall.data
+            var activeModel = resolvedCall.activeModelId
+            var usedFallback = resolvedCall.isFallback
             val candidate = response.candidates?.firstOrNull()
             val functionCall = candidate?.content?.parts?.firstOrNull()?.functionCall
 
@@ -301,16 +479,26 @@ class GeminiProvider(
 
                 val secondRequest = generateRequest.copy(contents = nextContents)
 
-                response = apiService.generateContent(apiKey, secondRequest)
+                resolvedCall = executeGenerateCall(apiKey, secondRequest, activeModel)
+                response = resolvedCall.data
+                activeModel = resolvedCall.activeModelId
+                usedFallback = usedFallback || resolvedCall.isFallback
             }
 
             val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
             if (!text.isNullOrBlank()) {
-                ProviderResponse(text = text, providerName = providerName)
+                ProviderResponse(
+                    text = text,
+                    providerName = providerName,
+                    activeModelId = activeModel,
+                    isModelFallback = usedFallback
+                )
             } else {
                 ProviderResponse(
                     text = "Aether returned an empty response. Please try reframing your instruction.",
-                    providerName = providerName
+                    providerName = providerName,
+                    activeModelId = activeModel,
+                    isModelFallback = usedFallback
                 )
             }
         } catch (e: Exception) {
@@ -341,9 +529,31 @@ class GeminiProvider(
             }
         }
 
-        // 2. Add user prompt if not already the last turn
+        // 2. Add user prompt (and optional multimodal image attachment)
         val lastContent = contents.lastOrNull()
-        if (lastContent == null || lastContent.parts.firstOrNull()?.text != request.userMessage || lastContent.role != "user") {
+        val hasImage = request.imageAttachment != null && request.imageAttachment.base64Data.isNotBlank()
+        if (hasImage) {
+            val userParts = mutableListOf<Part>()
+            val attachment = request.imageAttachment!!
+            userParts.add(
+                Part(
+                    inlineData = GeminiInlineData(
+                        mimeType = attachment.mimeType,
+                        data = attachment.base64Data
+                    )
+                )
+            )
+            userParts.add(
+                Part(
+                    text = request.userMessage.ifBlank { "Analyze this image in detail." }
+                )
+            )
+            if (lastContent != null && lastContent.role == "user" && lastContent.parts.firstOrNull()?.text == request.userMessage) {
+                contents[contents.lastIndex] = Content(role = "user", parts = userParts)
+            } else {
+                contents.add(Content(role = "user", parts = userParts))
+            }
+        } else if (lastContent == null || lastContent.parts.firstOrNull()?.text != request.userMessage || lastContent.role != "user") {
             if (request.userMessage.isNotBlank()) {
                 contents.add(
                     Content(

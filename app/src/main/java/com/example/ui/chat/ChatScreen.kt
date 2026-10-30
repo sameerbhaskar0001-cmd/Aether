@@ -1,7 +1,14 @@
 package com.example.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,21 +21,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,6 +46,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -50,10 +60,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.example.ai.provider.selection.GeminiModelVariant
 import com.example.data.model.Message
 import com.example.data.model.MessageStatus
-import com.example.ui.file.FileScreen
 import com.example.data.model.Sender
+import com.example.ui.file.FileScreen
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -68,6 +80,7 @@ fun ChatScreen(
     viewModel: ChatViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val isDarkTheme by viewModel.isDarkTheme.collectAsState()
     val messages by viewModel.messages.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
@@ -76,15 +89,50 @@ fun ChatScreen(
     val conversations by viewModel.conversations.collectAsState()
     val currentConvId by viewModel.currentConversationId.collectAsState()
     val lastResponseProvider by viewModel.lastResponseProvider.collectAsState()
-
-    val hasAnyKey by viewModel.hasAnyKey.collectAsState()
-    var showApiKeyDialog by remember { mutableStateOf(false) }
+    val lastResponseModel by viewModel.lastResponseModel.collectAsState()
+    val geminiModelVariant by viewModel.geminiModelVariant.collectAsState()
+    val attachedImage by viewModel.attachedImage.collectAsState()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    val voiceController = remember(context) { VoiceAssistantController(context) }
+    val speakingMessageId by voiceController.speakingMessageId.collectAsState()
+    val isListening by voiceController.isListening.collectAsState()
+
+    DisposableEffect(voiceController) {
+        onDispose {
+            voiceController.shutdown()
+        }
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            coroutineScope.launch {
+                val loaded = ImageAttachmentLoader.loadFromUri(context, uri)
+                if (loaded != null) {
+                    viewModel.setAttachedImage(loaded)
+                }
+            }
+        }
+    }
+
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            voiceController.startListening(
+                onPartialOrFinalResult = { spokenText ->
+                    viewModel.updateInputText(spokenText)
+                }
+            )
+        }
+    }
 
     var currentScreen by remember { mutableStateOf(AppScreen.CHAT) }
 
@@ -101,13 +149,6 @@ fun ChatScreen(
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
-    }
-
-    if (showApiKeyDialog) {
-        ApiKeyDialog(
-            onDismiss = { showApiKeyDialog = false },
-            onKeysSaved = { viewModel.refreshKeysState() }
-        )
     }
 
     ModalNavigationDrawer(
@@ -151,10 +192,6 @@ fun ChatScreen(
                     onThemeToggled = {
                         viewModel.toggleTheme()
                     },
-                    onOpenApiKeyDialog = {
-                        coroutineScope.launch { drawerState.close() }
-                        showApiKeyDialog = true
-                    },
                     onCloseDrawer = {
                         coroutineScope.launch { drawerState.close() }
                     }
@@ -178,11 +215,14 @@ fun ChatScreen(
                     val selectionMode by viewModel.uiSelectionMode.collectAsState()
                     val selectedProvider by viewModel.uiSelectedProvider.collectAsState()
 
-                    // 1. Premium Top Navigation Bar (with menu toggle & status indicator)
+                    // 1. Top Navigation Bar with Gemini 2.5 Flash / Pro Toggle & Active Model Disclosure
                     TopNavigationBar(
                         isIncognito = isIncognito,
                         selectionMode = selectionMode,
                         selectedProvider = selectedProvider,
+                        geminiVariant = geminiModelVariant,
+                        activeModelId = lastResponseModel,
+                        onGeminiVariantChanged = { viewModel.setGeminiModelVariant(it) },
                         onModeChanged = { viewModel.updateSelectionMode(it) },
                         onProviderChanged = { viewModel.updateSelectedProvider(it) },
                         onMenuClick = {
@@ -191,57 +231,12 @@ fun ChatScreen(
                             coroutineScope.launch { drawerState.open() }
                         },
                         onClearClick = {
+                            voiceController.stopSpeaking()
                             viewModel.clearChat()
                             focusManager.clearFocus()
                         },
                         canClear = messages.isNotEmpty()
                     )
-
-                    // Banner when no API Key is configured
-                    if (!hasAnyKey) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 6.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { showApiKeyDialog = true }
-                                .testTag("api_key_warning_banner"),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Key,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "API Key Setup Required",
-                                        style = TextStyle(
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onBackground
-                                        )
-                                    )
-                                    Text(
-                                        text = "Tap here to paste your Gemini, OpenRouter (Qwen), or Groq API key.",
-                                        style = TextStyle(
-                                            fontFamily = FontFamily.SansSerif,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
 
                     // Conversation / Empty State Area
                     Box(
@@ -267,8 +262,19 @@ fun ChatScreen(
                             ) {
                                 items(messages, key = { it.id }) { message ->
                                     val isLastMessage = message.id == messages.lastOrNull()?.id
-                                    val activeProvider = if (isLastMessage) lastResponseProvider else null
-                                    MessageItem(message = message, activeProvider = activeProvider, isDarkTheme = isDarkTheme)
+                                    val activeProvider = if (isLastMessage) {
+                                        lastResponseModel ?: lastResponseProvider
+                                    } else null
+                                    val isSpeakingThis = speakingMessageId == message.id
+                                    MessageItem(
+                                        message = message,
+                                        activeProvider = activeProvider,
+                                        isDarkTheme = isDarkTheme,
+                                        isSpeaking = isSpeakingThis,
+                                        onSpeakToggle = {
+                                            voiceController.toggleSpeak(message.id, message.content)
+                                        }
+                                    )
                                 }
                             }
                         }
@@ -285,17 +291,47 @@ fun ChatScreen(
                         )
                     }
 
-                    // 3. Message Input Area at the Bottom (Keyboard Aware)
+                    // 3. Message Input Area at the Bottom (Multimodal Image + Voice + Text)
                     InputArea(
                         text = inputText,
                         onTextChanged = { viewModel.updateInputText(it) },
                         onSendClicked = {
+                            voiceController.stopListening()
                             viewModel.sendMessage()
                             keyboardController?.hide()
                             focusManager.clearFocus()
                         },
                         isThinking = isThinking,
-                        isDarkTheme = isDarkTheme
+                        isDarkTheme = isDarkTheme,
+                        attachedImage = attachedImage,
+                        onAttachImageClicked = {
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onRemoveImageClicked = {
+                            viewModel.clearAttachedImage()
+                        },
+                        isListening = isListening,
+                        onVoiceInputClicked = {
+                            if (isListening) {
+                                voiceController.stopListening()
+                            } else {
+                                val hasPerm = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasPerm) {
+                                    voiceController.startListening(
+                                        onPartialOrFinalResult = { spokenText ->
+                                            viewModel.updateInputText(spokenText)
+                                        }
+                                    )
+                                } else {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+                        }
                     )
                 }
             }
@@ -377,7 +413,7 @@ fun DrawerContent(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Actions: New Chat & Toggle Incognito
+        // Actions: New Chat
         Button(
             onClick = onNewChatClicked,
             modifier = Modifier
@@ -658,7 +694,7 @@ fun DrawerContent(
                     }
                 }
                 Switch(
-                    checked = !isDarkTheme, // Checked = Light Theme active
+                    checked = !isDarkTheme,
                     onCheckedChange = { onThemeToggled() },
                     modifier = Modifier.testTag("theme_toggle_switch"),
                     colors = SwitchDefaults.colors(
@@ -668,95 +704,6 @@ fun DrawerContent(
                         uncheckedTrackColor = MaterialTheme.colorScheme.background
                     )
                 )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // API Key Settings Option
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
-                .clickable { onOpenApiKeyDialog() }
-                .testTag("api_key_settings_card"),
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Key,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Column {
-                        Text(
-                            text = "API Key Settings",
-                            style = TextStyle(
-                                fontFamily = FontFamily.SansSerif,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                        )
-                        Text(
-                            text = "Configure Gemini, OpenRouter & Groq keys",
-                            style = TextStyle(
-                                fontFamily = FontFamily.SansSerif,
-                                fontWeight = FontWeight.Normal,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Temporary Runtime Diagnostic Card (Reports ONLY boolean presence, NEVER keys)
-        val bcGemini = try { com.example.BuildConfig.GEMINI_API_KEY.isNotBlank() && !com.example.BuildConfig.GEMINI_API_KEY.startsWith("MY_") } catch (e: Throwable) { false }
-        val bcGroq = try { com.example.BuildConfig.GROQ_API_KEY.isNotBlank() && !com.example.BuildConfig.GROQ_API_KEY.startsWith("MY_") } catch (e: Throwable) { false }
-        val bcOpenRouter = try { com.example.BuildConfig.OPENROUTER_API_KEY.isNotBlank() && !com.example.BuildConfig.OPENROUTER_API_KEY.startsWith("MY_") } catch (e: Throwable) { false }
-
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Column(modifier = Modifier.padding(10.dp)) {
-                Text(
-                    text = "BUILDCONFIG RUNTIME DIAGNOSTIC",
-                    style = TextStyle(fontWeight = FontWeight.Bold, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                )
-                Text(text = "GEMINI BuildConfig key present: $bcGemini", style = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface))
-                Text(text = "GROQ BuildConfig key present: $bcGroq", style = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface))
-                Text(text = "OPENROUTER BuildConfig key present: $bcOpenRouter", style = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface))
             }
         }
 
@@ -828,6 +775,7 @@ fun DrawerContent(
                                     text = formatTimestamp(conv.lastUpdated),
                                     style = TextStyle(
                                         fontFamily = FontFamily.SansSerif,
+                                        fontWeight = FontWeight.Normal,
                                         fontSize = 10.sp,
                                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
                                     ),
@@ -870,7 +818,10 @@ fun TopNavigationBar(
     onMenuClick: () -> Unit,
     onClearClick: () -> Unit,
     canClear: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    geminiVariant: GeminiModelVariant = GeminiModelVariant.FLASH_2_5,
+    activeModelId: String? = null,
+    onGeminiVariantChanged: (GeminiModelVariant) -> Unit = {}
 ) {
     Surface(
         modifier = modifier
@@ -888,7 +839,7 @@ fun TopNavigationBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Left Area: Menu toggle and Identity
+                // Left Area: Menu toggle, Identity, and Gemini 2.5 Flash/Pro Toggle
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -918,7 +869,6 @@ fun TopNavigationBar(
                         )
                     )
 
-                    // Incognito Mode status banner pill
                     if (isIncognito) {
                         Box(
                             modifier = Modifier
@@ -943,12 +893,15 @@ fun TopNavigationBar(
                     ModelSelector(
                         selectionMode = selectionMode,
                         selectedProvider = selectedProvider,
+                        geminiVariant = geminiVariant,
+                        activeModelId = activeModelId,
+                        onGeminiVariantChanged = onGeminiVariantChanged,
                         onModeChanged = onModeChanged,
                         onProviderChanged = onProviderChanged
                     )
                 }
 
-                // Right Area: Restart/Clear active context
+                // Right Area: Clear conversation
                 if (canClear) {
                     IconButton(
                         onClick = onClearClick,
@@ -990,7 +943,6 @@ fun EmptyStateScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Minimalist Emblem
         Box(
             modifier = Modifier
                 .size(64.dp)
@@ -1016,7 +968,6 @@ fun EmptyStateScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Title
         Text(
             text = if (isIncognito) "INCOGNITO WORKSPACE" else "A E T H E R",
             style = TextStyle(
@@ -1031,12 +982,11 @@ fun EmptyStateScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Subtitle
         Text(
             text = if (isIncognito) {
                 "Incognito session active. Messages are completely transient and will never be saved to persistent database history."
             } else {
-                "An autonomous cognitive workspace, designed for absolute focus and zero noise."
+                "An autonomous cognitive workspace powered by Gemini 2.5, designed for absolute focus and zero noise."
             },
             style = TextStyle(
                 fontFamily = FontFamily.SansSerif,
@@ -1051,7 +1001,6 @@ fun EmptyStateScreen(
 
         Spacer(modifier = Modifier.height(48.dp))
 
-        // Active suggestions
         Column(
             modifier = Modifier.widthIn(max = 400.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1122,18 +1071,29 @@ fun ModelSelector(
     selectedProvider: com.example.ai.provider.AIProviderType,
     onModeChanged: (com.example.ai.provider.selection.SelectionMode) -> Unit,
     onProviderChanged: (com.example.ai.provider.AIProviderType) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    geminiVariant: GeminiModelVariant = GeminiModelVariant.FLASH_2_5,
+    activeModelId: String? = null,
+    onGeminiVariantChanged: (GeminiModelVariant) -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    val displayText = if (selectionMode == com.example.ai.provider.selection.SelectionMode.AUTO) {
-        "Auto"
-    } else {
-        when (selectedProvider) {
-            com.example.ai.provider.AIProviderType.GEMINI -> "Gemini"
-            com.example.ai.provider.AIProviderType.GROQ -> "Groq"
-            com.example.ai.provider.AIProviderType.OPENROUTER -> "OpenRouter"
-            else -> selectedProvider.name
+    val pillLabel = remember(geminiVariant, activeModelId) {
+        if (!activeModelId.isNullOrBlank() && activeModelId.contains("Fallback", ignoreCase = true)) {
+            val cleanModel = activeModelId.replace("(Fallback)", "").trim()
+            val shortName = when (cleanModel) {
+                "gemini-3.8-flash" -> "3.8 Flash"
+                "gemini-3.1-pro-preview" -> "3.1 Pro"
+                "gemini-3.5-flash" -> "3.5 Flash"
+                "gemini-flash-latest" -> "Flash Latest"
+                "gemini-2.5-flash" -> "2.5 Flash"
+                "gemini-2.5-pro" -> "2.5 Pro"
+                "gemini-2.0-flash" -> "2.0 Flash"
+                else -> cleanModel
+            }
+            "$shortName (Fallback)"
+        } else {
+            geminiVariant.displayName
         }
     }
 
@@ -1155,13 +1115,14 @@ fun ModelSelector(
                 modifier = Modifier.size(14.dp)
             )
             Text(
-                text = displayText,
+                text = pillLabel,
                 style = TextStyle(
                     fontFamily = FontFamily.SansSerif,
                     fontWeight = FontWeight.Medium,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onBackground
-                )
+                ),
+                modifier = Modifier.testTag("active_model_label")
             )
         }
 
@@ -1171,47 +1132,31 @@ fun ModelSelector(
             modifier = Modifier.testTag("model_selector_dropdown")
         ) {
             DropdownMenuItem(
-                text = { Text("Auto routing (Default)", fontSize = 13.sp) },
+                text = { Text("Gemini 3.8 Flash (Recommended)", fontSize = 13.sp) },
                 onClick = {
+                    onGeminiVariantChanged(GeminiModelVariant.FLASH_3_8)
                     onModeChanged(com.example.ai.provider.selection.SelectionMode.AUTO)
+                    onProviderChanged(com.example.ai.provider.AIProviderType.GEMINI)
                     expanded = false
                 },
                 leadingIcon = {
                     Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                 },
-                modifier = Modifier.testTag("model_option_auto")
+                modifier = Modifier.testTag("model_option_gemini_flash")
             )
 
-            Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-
             DropdownMenuItem(
-                text = { Text("Gemini", fontSize = 13.sp) },
+                text = { Text("Gemini 3.1 Pro (Deep Reasoning)", fontSize = 13.sp) },
                 onClick = {
+                    onGeminiVariantChanged(GeminiModelVariant.PRO_3_1)
                     onModeChanged(com.example.ai.provider.selection.SelectionMode.MANUAL)
                     onProviderChanged(com.example.ai.provider.AIProviderType.GEMINI)
                     expanded = false
                 },
-                modifier = Modifier.testTag("model_option_gemini")
-            )
-
-            DropdownMenuItem(
-                text = { Text("Groq", fontSize = 13.sp) },
-                onClick = {
-                    onModeChanged(com.example.ai.provider.selection.SelectionMode.MANUAL)
-                    onProviderChanged(com.example.ai.provider.AIProviderType.GROQ)
-                    expanded = false
+                leadingIcon = {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                 },
-                modifier = Modifier.testTag("model_option_groq")
-            )
-
-            DropdownMenuItem(
-                text = { Text("OpenRouter", fontSize = 13.sp) },
-                onClick = {
-                    onModeChanged(com.example.ai.provider.selection.SelectionMode.MANUAL)
-                    onProviderChanged(com.example.ai.provider.AIProviderType.OPENROUTER)
-                    expanded = false
-                },
-                modifier = Modifier.testTag("model_option_openrouter")
+                modifier = Modifier.testTag("model_option_gemini_pro")
             )
         }
     }
@@ -1222,6 +1167,8 @@ fun MessageItem(
     message: Message,
     activeProvider: String? = null,
     isDarkTheme: Boolean = true,
+    isSpeaking: Boolean = false,
+    onSpeakToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isUser = message.sender == Sender.USER
@@ -1233,7 +1180,6 @@ fun MessageItem(
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
         if (isUser) {
-            // User Chat Bubble
             Box(
                 modifier = Modifier
                     .widthIn(max = 280.dp)
@@ -1255,11 +1201,10 @@ fun MessageItem(
                 )
             }
         } else {
-            // Assistant Chat Bubble & Structure
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Top,
-                modifier = Modifier.fillMaxWidth(0.9f)
+                modifier = Modifier.fillMaxWidth(0.92f)
             ) {
                 Box(
                     modifier = Modifier
@@ -1281,16 +1226,38 @@ fun MessageItem(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = if (activeProvider != null) "Aether (via $activeProvider)" else "Aether",
-                        style = TextStyle(
-                            fontFamily = FontFamily.SansSerif,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = if (activeProvider != null) "Aether ($activeProvider)" else "Aether",
+                            style = TextStyle(
+                                fontFamily = FontFamily.SansSerif,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
+                            )
                         )
-                    )
+
+                        if (message.status != MessageStatus.THINKING && message.content.isNotBlank()) {
+                            IconButton(
+                                onClick = onSpeakToggle,
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .testTag("speak_message_button_${message.id}")
+                            ) {
+                                Icon(
+                                    imageVector = if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = if (isSpeaking) "Stop speaking" else "Speak response",
+                                    tint = if (isSpeaking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                    }
 
                     if (message.status == MessageStatus.THINKING) {
                         ThinkingIndicator(
@@ -1402,6 +1369,11 @@ fun InputArea(
     onSendClicked: () -> Unit,
     isThinking: Boolean,
     isDarkTheme: Boolean = true,
+    attachedImage: UiImageAttachment? = null,
+    onAttachImageClicked: () -> Unit = {},
+    onRemoveImageClicked: () -> Unit = {},
+    isListening: Boolean = false,
+    onVoiceInputClicked: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -1416,14 +1388,120 @@ fun InputArea(
                     .background(MaterialTheme.colorScheme.outline)
             )
 
+            // Multimodal attached image preview chip
+            if (attachedImage != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .testTag("attached_image_preview"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (attachedImage.previewBitmap != null) {
+                                Image(
+                                    bitmap = attachedImage.previewBitmap,
+                                    contentDescription = "Selected image preview",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Image,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            Text(
+                                text = "Image attached for vision analysis",
+                                style = TextStyle(
+                                    fontFamily = FontFamily.SansSerif,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                            )
+                            IconButton(
+                                onClick = onRemoveImageClicked,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .testTag("remove_attached_image_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Remove attached image",
+                                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.navigationBars)
-                    .padding(16.dp),
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Attach Image (Photo Picker) Button
+                IconButton(
+                    onClick = onAttachImageClicked,
+                    enabled = !isThinking,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                        .testTag("attach_image_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Image,
+                        contentDescription = "Attach image for vision analysis",
+                        tint = if (attachedImage != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Voice Input (Speech-to-Text) Button
+                IconButton(
+                    onClick = onVoiceInputClicked,
+                    enabled = !isThinking,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .border(
+                            1.dp,
+                            if (isListening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                            CircleShape
+                        )
+                        .background(
+                            if (isListening) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent
+                        )
+                        .testTag("voice_input_button")
+                ) {
+                    Icon(
+                        imageVector = if (isListening) Icons.Default.Stop else Icons.Default.Mic,
+                        contentDescription = if (isListening) "Stop voice input" else "Start voice input",
+                        tint = if (isListening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -1436,17 +1514,17 @@ fun InputArea(
                             color = MaterialTheme.colorScheme.outline,
                             shape = RoundedCornerShape(24.dp)
                         )
-                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
                     if (text.isEmpty()) {
                         Text(
-                            text = "Message Aether...",
+                            text = if (isListening) "Listening..." else "Message Aether...",
                             style = TextStyle(
                                 fontFamily = FontFamily.SansSerif,
                                 fontWeight = FontWeight.Normal,
                                 fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
+                                color = if (isListening) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
                             )
                         )
                     }
@@ -1467,7 +1545,7 @@ fun InputArea(
                         ),
                         keyboardActions = KeyboardActions(
                             onSend = {
-                                if (text.isNotBlank() && !isThinking) {
+                                if ((text.isNotBlank() || attachedImage != null) && !isThinking) {
                                     onSendClicked()
                                 }
                             }
@@ -1479,7 +1557,7 @@ fun InputArea(
                     )
                 }
 
-                val isEnabled = text.isNotBlank() && !isThinking
+                val isEnabled = (text.isNotBlank() || attachedImage != null) && !isThinking
                 val sendButtonColor = MaterialTheme.colorScheme.primary
                 val onSendButtonColor = MaterialTheme.colorScheme.onPrimary
 
@@ -1523,7 +1601,7 @@ fun ProactiveDeliveryCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         ),
-        border = androidx.compose.foundation.BorderStroke(
+        border = BorderStroke(
             width = 1.dp,
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
         ),
@@ -1534,7 +1612,6 @@ fun ProactiveDeliveryCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header with Icon and Title
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1574,7 +1651,6 @@ fun ProactiveDeliveryCard(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Message Content
             Text(
                 text = delivery.message,
                 style = TextStyle(
@@ -1589,7 +1665,6 @@ fun ProactiveDeliveryCard(
 
             if (delivery.explanation.isNotBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
-                // Context/Reason
                 Text(
                     text = delivery.explanation,
                     style = TextStyle(
@@ -1605,7 +1680,6 @@ fun ProactiveDeliveryCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Action Button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End

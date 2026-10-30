@@ -132,6 +132,21 @@ class ToolRegistry @JvmOverloads constructor(
     }
 
     /**
+     * Clears transient session-only state across all registered productivity tools when an Incognito session ends.
+     */
+    fun clearIncognitoSessionState() {
+        synchronized(toolsLock) {
+            registeredTools.values.forEach { tool ->
+                when (tool) {
+                    is com.example.ai.tool.impl.RemindersTool -> tool.clearIncognitoSession()
+                    is com.example.ai.tool.impl.NotesTool -> tool.clearIncognitoSession()
+                    is com.example.ai.tool.impl.TasksTool -> tool.clearIncognitoSession()
+                }
+            }
+        }
+    }
+
+    /**
      * Returns the number of registered tools.
      */
     val size: Int
